@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.env
+database/*.db
+database/*.db-*
+*.log
+
+# Never commit real production secrets.
+.env.production

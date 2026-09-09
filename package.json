@@ -1,0 +1,14 @@
+{
+  "name": "parentos",
+  "private": true,
+  "version": "0.1.0",
+  "description": "ParentOS - a curated second-hand marketplace for Finnish families.",
+  "scripts": {
+    "verify": "./verify.sh",
+    "dev:backend": "cd backend && npm run dev",
+    "dev:frontend": "cd frontend && npm run dev",
+    "worker": "cd backend && npm run worker",
+    "migrate": "cd backend && npm run migrate",
+    "reconcile": "cd backend && npm run reconcile"
+  }
+}

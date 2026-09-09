@@ -1,0 +1,158 @@
+# Production stack.
+#
+#                        internet
+#                           |
+#                      [  proxy  ]  nginx: TLS, static SPA, API routing
+#                           |
+#              +------------+------------+
+#              v            v            v
+#             api         worker    (static assets, served by proxy)
+#              |            |
+#      +-------+-----+------+
+#      v             v
+#   postgres       redis        object storage (external: S3/R2)
+#      |
+#      +-- backup (scheduled, verified pg_dump)
+#
+# Only the proxy publishes ports. Postgres and Redis are not reachable from
+# the host at all - an exposed database port is one of the most common ways
+# a small deployment gets compromised.
+#
+# NOTE: this file has NOT been built or run where it was written (no Docker
+# daemon available). The pieces it depends on - the nginx config, the
+# backup script, the health/readiness endpoints, the startup config
+# validation - have all been executed and verified. The orchestration
+# itself has not. Treat the first `docker compose up` as a real test.
+
+name: parentos
+
+services:
+  proxy:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx/parentos.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./frontend/dist:/usr/share/nginx/html:ro
+      - certbot-certs:/etc/letsencrypt:ro
+      - certbot-webroot:/var/www/certbot:ro
+    depends_on:
+      - api
+
+  # TLS certificates, renewed on a loop rather than host cron so the stack
+  # stays self-contained. Writes into a volume the proxy reads.
+  certbot:
+    image: certbot/certbot:latest
+    restart: unless-stopped
+    volumes:
+      - certbot-certs:/etc/letsencrypt
+      - certbot-webroot:/var/www/certbot
+    entrypoint: sh -c 'trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet; sleep 12h & wait $${!}; done'
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://parentos:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/parentos
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # No `ports` - only the proxy reaches the API.
+    expose:
+      - "4000"
+    volumes:
+      # Only used when S3 isn't configured. A named volume means images
+      # survive a redeploy, though not a move to another host - which is
+      # why object storage is the real answer (the app warns about this at
+      # startup when S3_BUCKET is unset).
+      - api-uploads:/app/uploads
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.worker
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://parentos:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/parentos
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      # The worker strips EXIF from quarantined uploads, so it needs the
+      # same storage the API wrote them to.
+      - api-uploads:/app/uploads
+
+  postgres:
+    # postgis rather than plain postgres: migration 008 enables the
+    # extension. It degrades gracefully without it, but distance search
+    # falls back to the slower in-process path.
+    image: postgis/postgis:16-3.4
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: parentos
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: parentos
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U parentos -d parentos"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # Persistence on: the queue holds jobs representing real user actions
+    # (an AI reply someone is waiting for, an image awaiting EXIF
+    # stripping). Losing them on restart is the exact failure the queue was
+    # introduced to fix.
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://parentos:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/parentos
+      BACKUP_DIR: /backups
+    volumes:
+      - ./scripts/backup.sh:/usr/local/bin/backup.sh:ro
+      - backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # The script verifies every dump and exits non-zero on failure, so a
+    # bad backup is visible in container logs instead of failing silently.
+    entrypoint: sh -c 'apk add --no-cache bash >/dev/null; while :; do bash /usr/local/bin/backup.sh || echo "BACKUP FAILED"; sleep 86400; done'
+
+volumes:
+  postgres-data:
+  redis-data:
+  api-uploads:
+  backups:
+  certbot-certs:
+  certbot-webroot:

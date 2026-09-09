@@ -1,0 +1,13 @@
+-- P1 #8: session revocation.
+--
+-- JWTs are stateless - once issued, a token stays valid until it expires
+-- (30 days here) no matter what happens to the account. There was
+-- previously no way to invalidate one early: "log out everywhere" was
+-- impossible, and if a token were ever stolen the only remedy was waiting
+-- a month or rotating JWT_SECRET (which logs out every user on the
+-- platform at once).
+--
+-- session_version is embedded in each token as it's issued and re-checked
+-- on every authenticated request. Bumping a user's version instantly
+-- invalidates every token issued before the bump, for that user only.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS session_version INTEGER NOT NULL DEFAULT 1;
