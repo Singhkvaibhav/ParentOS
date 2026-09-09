@@ -66,9 +66,21 @@ function check() {
 
   // An open CORS origin combined with credentialed cookies is a CSRF hole
   // that no amount of token checking fully closes.
-  const origins = process.env.CORS_ORIGINS || "";
-  if (!origins) {
-    errors.push("CORS_ORIGINS is not set - the API would reject the frontend, or worse, allow everything.");
+  // Checks the RESOLVED value, not the raw variable. Validating a variable
+  // the server doesn't read is worse than not validating at all: it reports
+  // success while the server quietly serves a different configuration.
+  const { resolveCorsOrigins } = require("./config");
+  const cors = resolveCorsOrigins();
+  const origins = cors.origins.join(",");
+
+  if (cors.usingDefault) {
+    errors.push("CORS_ORIGINS is not set - the API would fall back to the localhost dev origin and block your real frontend.");
+  } else if (cors.source === "ALLOWED_ORIGINS") {
+    warnings.push("ALLOWED_ORIGINS is deprecated - rename it to CORS_ORIGINS.");
+  }
+
+  if (cors.usingDefault) {
+    // Already reported above; skip the shape checks on a default value.
   } else if (origins.includes("*")) {
     errors.push("CORS_ORIGINS contains a wildcard, which is unsafe with credentialed cookies.");
   } else if (origins.split(",").some((o) => o.trim().startsWith("http://"))) {
@@ -91,6 +103,40 @@ function check() {
   // Email: verification codes are how accounts are created at all.
   if (!process.env.SMTP_HOST) {
     errors.push("SMTP_HOST is not set - verification emails would only be written to logs, so nobody could sign up.");
+  }
+
+  // Object storage. Local disk is fine for development and wrong for
+  // production for reasons that only show up once it's too late: container
+  // filesystems are ephemeral, so every deploy silently deletes every
+  // uploaded photo, and a second instance can't see the first one's files.
+  if (!process.env.S3_BUCKET) {
+    errors.push(
+      "S3_BUCKET is not set - uploads would go to local disk, which is wiped on every deploy and invisible to other instances. Configure S3, R2 or another S3-compatible store."
+    );
+  } else {
+    for (const key of ["S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"]) {
+      if (!process.env[key]) errors.push(`${key} is not set, but S3_BUCKET is - uploads would fail.`);
+    }
+    // Region is required by AWS; S3-compatible providers (R2, B2) use a
+    // custom endpoint instead, so one or the other must be present.
+    if (!process.env.S3_REGION && !process.env.S3_ENDPOINT) {
+      errors.push("Set S3_REGION (AWS) or S3_ENDPOINT (R2/B2/other S3-compatible provider).");
+    }
+  }
+
+  // Background jobs. Without Redis the app still works - it falls back to
+  // in-process execution - but a restart loses queued AI replies and image
+  // processing, so it's a warning rather than an error.
+  if (!process.env.REDIS_URL) {
+    warnings.push("REDIS_URL is not set - background jobs run in-process and are lost if the server restarts.");
+  }
+
+  // Where reset links and notification emails point. Defaults to
+  // localhost, which would send every user a dead link.
+  if (!process.env.FRONTEND_URL) {
+    errors.push("FRONTEND_URL is not set - password reset and notification emails would link to localhost.");
+  } else if (process.env.FRONTEND_URL.startsWith("http://")) {
+    errors.push("FRONTEND_URL is plain http - password reset links would be sent over an unencrypted connection.");
   }
 
   // Images on local disk disappear on every container restart or redeploy.

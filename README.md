@@ -37,6 +37,58 @@ proper local dev setup you can open in VS Code, extend, and eventually
 deploy. The artifact version still exists as a backup for quick, no-setup
 demos - this project is for real development.
 
+## Thirty-first round: CORS mismatch, checkout atomicity, production config
+
+**A silent production-breaking bug.** `server.js` read `ALLOWED_ORIGINS`
+while `configCheck.js` validated `CORS_ORIGINS`. In production that
+combination is worse than no check at all: you set `CORS_ORIGINS`, startup
+validation reports everything fine, and the server ignores it and falls
+back to `http://localhost:5173` - so the real frontend is CORS-blocked
+while the config check says the config is correct.
+
+Resolution now lives in one place (`config.resolveCorsOrigins`), used by
+both the server and the check, so they cannot disagree. `CORS_ORIGINS` is
+canonical; `ALLOWED_ORIGINS` still works but warns as deprecated. Falling
+back to the dev default is a startup **error** in production, since a
+server that starts and then blocks its own frontend is the failure mode
+this is meant to prevent.
+
+**Checkout is now atomic.** The transaction row and its first audit event
+were two independent statements. A failure between them left either an
+order whose history begins mid-lifecycle, or - worse - an orphaned
+`pending` row whose PaymentIntent the error handler had already cancelled.
+Both now roll back together. A test asserts the invariant across every
+order the suite creates, so a future non-atomic path trips it.
+
+**Object storage is required in production, not advised.** Local disk on a
+container filesystem means every deploy silently deletes every uploaded
+photo, and a second instance cannot see the first one's files - a failure
+that only becomes visible once the damage is done. Missing `S3_BUCKET`, or
+a bucket without credentials, now refuses startup. `REDIS_URL` stays a
+warning, because the in-process fallback genuinely works.
+
+`FRONTEND_URL` is also now required and must be https, since it is what
+password-reset links point at - unset, every user gets a dead localhost
+link; plain http and the link travels unencrypted.
+
+**Docker images are now built in CI.** They had been written but never
+built, which meant "the Dockerfiles exist" was being mistaken for "the
+Dockerfiles work" - a distinction that surfaces during a deploy, the worst
+possible time. No Docker daemon is available in the sandbox, so rather
+than claim verification I could not perform, CI now builds all three
+images on every push, runs the API image to confirm it reports missing
+configuration and exits non-zero, and validates the compose file.
+
+**Password reset** was already implemented in the previous round; verified
+rather than rebuilt.
+
+**Not done, and not claimable:** staging, and the real Stripe test-mode
+run. Both need infrastructure and credentials outside this environment.
+`npm run journey` is written for the Stripe flow and skips with a clear
+message without keys.
+
+289 → 296 tests.
+
 ## Thirtieth round: order state machine, audit trail, security headers
 
 Worked the review's list in priority order, respecting the items it
@@ -1788,7 +1840,7 @@ A review flagged five issues; here's the current state of each:
    `POST /api/auth/resend-code` to get a fresh one) - previously it never
    expired and had no attempt limit at all, so it was a ~1-in-a-million
    brute force away from account takeover.
-7. **CORS pinned to an allowlist.** `ALLOWED_ORIGINS` in `.env` (defaults to
+7. **CORS pinned to an allowlist.** `CORS_ORIGINS` in `.env` (defaults to
    `http://localhost:5173`) instead of allowing every origin. Originally
    written when the JWT lived in `localStorage` (read-access risk); since
    the sixth round moved auth to an httpOnly cookie (see above), the
@@ -2125,7 +2177,7 @@ backend/
                   can reach Postgres as a raw type error)
   utils/          validation.js's parseId() - the body-field-id equivalent
                   of middleware/validateId.js, used inside services
-  tests/          Jest + Supertest (289 tests), run against a real
+  tests/          Jest + Supertest (296 tests), run against a real
                   parentos_test database - dbReset.js truncates it before
                   each test file, helpers.js's createVerifiedUser returns a
                   cookie-carrying supertest agent, transactions.test.js and

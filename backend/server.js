@@ -27,6 +27,7 @@ const cors = require("cors");
 const cookieParser = require("cookie-parser");
 const { issueCsrfToken, requireCsrfToken, CSRF_HEADER_NAME } = require("./middleware/csrf");
 const requestLogger = require("./middleware/requestLogger");
+const { resolveCorsOrigins } = require("./config");
 const { assertValidConfig } = require("./configCheck");
 const { captureException } = require("./errorTracking");
 const logger = require("./logger");
@@ -100,10 +101,18 @@ app.use(cookieParser());
 // reading responses) - `credentials: true` is required for the cookie to
 // be sent/received across origins at all, which makes a strict allowlist
 // (rather than a wildcard) essential, not optional.
-const allowedOrigins = (process.env.ALLOWED_ORIGINS || "http://localhost:5173")
-  .split(",")
-  .map((o) => o.trim())
-  .filter(Boolean);
+// Resolved by config.js so the server and the production config check can
+// never disagree about which variable is authoritative - they did, and the
+// mismatch was silent.
+const { origins: allowedOrigins, usingDefault: corsUsingDefault, source: corsSource } =
+  resolveCorsOrigins();
+
+if (corsSource === "ALLOWED_ORIGINS") {
+  logger.warn("cors_origins_legacy_variable", {
+    message: "ALLOWED_ORIGINS is deprecated - rename it to CORS_ORIGINS.",
+  });
+}
+logger.info("cors_configured", { origins: allowedOrigins, usingDefault: corsUsingDefault });
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin || allowedOrigins.includes(origin)) return callback(null, true);

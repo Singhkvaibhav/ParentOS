@@ -120,20 +120,30 @@ async function checkout(buyerId, { listingId: listingIdInput, deliveryMethod }) 
   // the reservation rather than leaving that dangling.
   let rows;
   try {
-    ({ rows } = await query(
-      `INSERT INTO transactions (listing_id, buyer_id, seller_id, item_amount_cents, delivery_method, delivery_fee_cents, commission_amount_cents, total_amount_cents, status, stripe_payment_intent_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', $9)
-       RETURNING *`,
-      [listing.id, buyerId, listing.seller_id, itemAmountCents, method, deliveryFeeCents, commissionAmountCents, totalAmountCents, paymentIntent.id]
-    ));
+    // The row and its first audit event are written in ONE transaction.
+    // Previously they were two independent statements, which left two bad
+    // outcomes possible: an order whose history starts mid-lifecycle
+    // (because the event insert failed), or - worse - an orphaned 'pending'
+    // row left behind after the catch below cancelled its PaymentIntent.
+    // Rolling back removes both.
+    rows = await withTransaction(async (tx) => {
+      const { rows: inserted } = await tx(
+        `INSERT INTO transactions (listing_id, buyer_id, seller_id, item_amount_cents, delivery_method, delivery_fee_cents, commission_amount_cents, total_amount_cents, status, stripe_payment_intent_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', $9)
+         RETURNING *`,
+        [listing.id, buyerId, listing.seller_id, itemAmountCents, method, deliveryFeeCents, commissionAmountCents, totalAmountCents, paymentIntent.id]
+      );
 
-    // Start the order's history at its beginning, so a support view never
-    // shows an order that appears to materialise mid-lifecycle.
-    await recordOrderCreated(rows[0].id, buyerId, {
-      paymentIntentId: paymentIntent.id,
-      listingId: listing.id,
-      totalAmountCents,
-      deliveryMethod: method,
+      // Start the order's history at its beginning, so a support view never
+      // shows an order that appears to materialise mid-lifecycle.
+      await recordOrderCreated(inserted[0].id, buyerId, {
+        paymentIntentId: paymentIntent.id,
+        listingId: listing.id,
+        totalAmountCents,
+        deliveryMethod: method,
+      }, tx);
+
+      return inserted;
     });
   } catch (e) {
     logger.error("transaction_persist_failed", { paymentIntentId: paymentIntent.id, listingId, err: e });

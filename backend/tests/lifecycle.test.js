@@ -421,3 +421,39 @@ describe("full journey: checkout -> paid -> fulfilled -> completed -> review", (
     expect(statuses.indexOf("fulfilled")).toBeLessThan(statuses.indexOf("completed"));
   });
 });
+
+// Checkout writes the transaction row and its first audit event. These
+// were previously two independent statements, so a failure between them
+// left either an order whose history begins mid-lifecycle, or an orphaned
+// 'pending' row whose PaymentIntent the error handler had already
+// cancelled.
+describe("checkout is atomic", () => {
+  test("a new order always has a creation event, from the very first read", async () => {
+    const seller = await createVerifiedUser(app, { email: "atomicseller@example.com" });
+    const buyer = await createVerifiedUser(app, { email: "atomicbuyer@example.com" });
+    const listing = await createListing(seller.agent);
+
+    const checkout = await buyer.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+    expect(checkout.status).toBe(201);
+
+    const { rows } = await query(
+      "SELECT event_type, to_status FROM transaction_events WHERE transaction_id = $1 ORDER BY id",
+      [checkout.body.transaction.id]
+    );
+    expect(rows[0].event_type).toBe("order_created");
+    expect(rows[0].to_status).toBe("pending");
+  });
+
+  test("no transaction row exists without a corresponding creation event", async () => {
+    // The invariant the atomicity buys. Checked across every order the
+    // suite has created, so a future non-atomic path would trip it.
+    const { rows } = await query(`
+      SELECT t.id FROM transactions t
+      WHERE NOT EXISTS (
+        SELECT 1 FROM transaction_events e
+        WHERE e.transaction_id = t.id AND e.event_type = 'order_created'
+      )
+    `);
+    expect(rows).toHaveLength(0);
+  });
+});

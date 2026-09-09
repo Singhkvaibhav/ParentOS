@@ -270,15 +270,93 @@ describe("startup configuration validation", () => {
     expect(errors.join(" ")).toMatch(/STRIPE_WEBHOOK_SECRET/);
   });
 
-  test("optional infrastructure produces warnings, not refusals", () => {
+  // Object storage is REQUIRED in production, not advisory. Local disk on a
+  // container filesystem means every deploy silently deletes every uploaded
+  // photo, and a second instance can't see the first one's files - a failure
+  // that only becomes visible once the damage is done.
+  test("missing object storage refuses to start", () => {
+    const { errors } = withEnv(
+      { NODE_ENV: "production", JWT_SECRET: "x".repeat(40), DATABASE_URL: "postgres://real",
+        CORS_ORIGINS: "https://a.example", STRIPE_SECRET_KEY: "sk_live_x",
+        STRIPE_WEBHOOK_SECRET: "whsec_x", SMTP_HOST: "smtp.example",
+        FRONTEND_URL: "https://a.example", S3_BUCKET: null },
+      () => { jest.resetModules(); return require("../configCheck").check(); }
+    );
+    expect(errors.join(" ")).toMatch(/S3_BUCKET/);
+  });
+
+  test("a bucket without credentials is refused too", () => {
+    const { errors } = withEnv(
+      { NODE_ENV: "production", JWT_SECRET: "x".repeat(40), DATABASE_URL: "postgres://real",
+        CORS_ORIGINS: "https://a.example", STRIPE_SECRET_KEY: "sk_live_x",
+        STRIPE_WEBHOOK_SECRET: "whsec_x", SMTP_HOST: "smtp.example",
+        FRONTEND_URL: "https://a.example",
+        S3_BUCKET: "uploads", S3_REGION: "eu-north-1", S3_ACCESS_KEY_ID: null },
+      () => { jest.resetModules(); return require("../configCheck").check(); }
+    );
+    expect(errors.join(" ")).toMatch(/S3_ACCESS_KEY_ID/);
+  });
+
+  // Redis is genuinely optional - the app falls back to running jobs
+  // in-process - so it warns rather than refusing.
+  test("a fully configured production environment starts, warning only about Redis", () => {
     const { errors, warnings } = withEnv(
       { NODE_ENV: "production", JWT_SECRET: "x".repeat(40), DATABASE_URL: "postgres://real",
         CORS_ORIGINS: "https://a.example", STRIPE_SECRET_KEY: "sk_live_x",
-        STRIPE_WEBHOOK_SECRET: "whsec_x", SMTP_HOST: "smtp.example" },
+        STRIPE_WEBHOOK_SECRET: "whsec_x", SMTP_HOST: "smtp.example",
+        FRONTEND_URL: "https://a.example",
+        S3_BUCKET: "uploads", S3_REGION: "eu-north-1",
+        S3_ACCESS_KEY_ID: "AKIA_x", S3_SECRET_ACCESS_KEY: "secret_x",
+        REDIS_URL: null },
       () => { jest.resetModules(); return require("../configCheck").check(); }
     );
     expect(errors).toHaveLength(0);
-    expect(warnings.join(" ")).toMatch(/S3_BUCKET|REDIS_URL/);
+    expect(warnings.join(" ")).toMatch(/REDIS_URL/);
+  });
+
+  // The bug this whole area exists to prevent: the server read
+  // ALLOWED_ORIGINS while the check validated CORS_ORIGINS, so production
+  // could pass validation and then silently serve the localhost default.
+  test("the check validates the same origins the server will actually use", () => {
+    const { errors } = withEnv(
+      { NODE_ENV: "production", JWT_SECRET: "x".repeat(40), DATABASE_URL: "postgres://real",
+        CORS_ORIGINS: null, ALLOWED_ORIGINS: null,
+        STRIPE_SECRET_KEY: "sk_live_x", STRIPE_WEBHOOK_SECRET: "whsec_x",
+        SMTP_HOST: "smtp.example", FRONTEND_URL: "https://a.example",
+        S3_BUCKET: "uploads", S3_REGION: "eu-north-1",
+        S3_ACCESS_KEY_ID: "AKIA_x", S3_SECRET_ACCESS_KEY: "secret_x" },
+      () => { jest.resetModules(); return require("../configCheck").check(); }
+    );
+    // Neither variable set: must be refused rather than falling back to
+    // http://localhost:5173 and blocking the real frontend.
+    expect(errors.join(" ")).toMatch(/CORS_ORIGINS/);
+  });
+
+  test("the legacy ALLOWED_ORIGINS still works, but is flagged as deprecated", () => {
+    const { errors, warnings } = withEnv(
+      { NODE_ENV: "production", JWT_SECRET: "x".repeat(40), DATABASE_URL: "postgres://real",
+        CORS_ORIGINS: null, ALLOWED_ORIGINS: "https://a.example",
+        STRIPE_SECRET_KEY: "sk_live_x", STRIPE_WEBHOOK_SECRET: "whsec_x",
+        SMTP_HOST: "smtp.example", FRONTEND_URL: "https://a.example",
+        S3_BUCKET: "uploads", S3_REGION: "eu-north-1",
+        S3_ACCESS_KEY_ID: "AKIA_x", S3_SECRET_ACCESS_KEY: "secret_x" },
+      () => { jest.resetModules(); return require("../configCheck").check(); }
+    );
+    expect(errors).toHaveLength(0);
+    expect(warnings.join(" ")).toMatch(/ALLOWED_ORIGINS/);
+  });
+
+  test("a plain-http FRONTEND_URL is refused - reset links would be unencrypted", () => {
+    const { errors } = withEnv(
+      { NODE_ENV: "production", JWT_SECRET: "x".repeat(40), DATABASE_URL: "postgres://real",
+        CORS_ORIGINS: "https://a.example", STRIPE_SECRET_KEY: "sk_live_x",
+        STRIPE_WEBHOOK_SECRET: "whsec_x", SMTP_HOST: "smtp.example",
+        FRONTEND_URL: "http://a.example",
+        S3_BUCKET: "uploads", S3_REGION: "eu-north-1",
+        S3_ACCESS_KEY_ID: "AKIA_x", S3_SECRET_ACCESS_KEY: "secret_x" },
+      () => { jest.resetModules(); return require("../configCheck").check(); }
+    );
+    expect(errors.join(" ")).toMatch(/FRONTEND_URL/);
   });
 
   test("development is not held to production requirements", () => {

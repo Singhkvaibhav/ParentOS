@@ -61,3 +61,62 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run build
+
+  # Builds the images for real. They were written but never built, which
+  # meant "the Dockerfiles exist" was being mistaken for "the Dockerfiles
+  # work" - a distinction that only shows up during a deploy, which is the
+  # worst time to find out. No registry push: this is a build check.
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build API image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: false
+          load: true
+          tags: parentos-api:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build worker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile.worker
+          push: false
+          load: true
+          tags: parentos-worker:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: false
+          load: true
+          tags: parentos-web:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # A built image that won't start is still broken. This catches a bad
+      # CMD, a missing runtime dependency, or a wrong working directory -
+      # none of which a successful build would reveal.
+      - name: API image starts and reports its config problems
+        run: |
+          # No env supplied, so the production config check should refuse
+          # to start AND say why. A silent crash or a clean start would
+          # both indicate the startup validation isn't wired into the image.
+          output=$(docker run --rm -e NODE_ENV=production parentos-api:ci 2>&1 || true)
+          echo "$output"
+          echo "$output" | grep -qi "JWT_SECRET\|DATABASE_URL\|CORS_ORIGINS" \
+            || (echo "::error::API image did not report missing configuration on startup" && exit 1)
+
+      - name: Compose file is valid
+        run: docker compose -f docker-compose.yml config --quiet

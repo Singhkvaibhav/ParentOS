@@ -33,6 +33,36 @@ const MARKETPLACE = {
 const CATEGORIES = ["clothes", "accessories", "toys"];
 const CONDITIONS = ["New with tags", "Like new", "Good", "Well loved"];
 
+// CORS origins, resolved in ONE place.
+//
+// This was previously split: server.js read ALLOWED_ORIGINS while
+// configCheck.js validated CORS_ORIGINS. In production that combination is
+// silently dangerous - you set CORS_ORIGINS, validation passes, and the
+// server ignores it and falls back to the localhost default, so the real
+// frontend is CORS-blocked while the config check reports everything fine.
+//
+// CORS_ORIGINS is canonical (it's what the deployment docs and production
+// validation use). ALLOWED_ORIGINS is still accepted so existing local
+// .env files keep working, but it's the fallback, not the other way round.
+const LOCAL_DEV_ORIGIN = "http://localhost:5173";
+
+function resolveCorsOrigins() {
+  const raw = process.env.CORS_ORIGINS || process.env.ALLOWED_ORIGINS || "";
+  const origins = raw.split(",").map((o) => o.trim()).filter(Boolean);
+
+  return {
+    origins: origins.length > 0 ? origins : [LOCAL_DEV_ORIGIN],
+    // Whether we fell back to the dev default. Production must refuse to
+    // start in that state rather than serve a frontend it will then block.
+    usingDefault: origins.length === 0,
+    // Which variable supplied the value, so a deprecation warning can name
+    // the right one.
+    source: process.env.CORS_ORIGINS ? "CORS_ORIGINS"
+          : process.env.ALLOWED_ORIGINS ? "ALLOWED_ORIGINS"
+          : "default",
+  };
+}
+
 const LIMITS = {
   // (P1 #3) Messages were unbounded - a single 300KB message would be
   // stored, re-sent in every thread fetch, and fed to the AI as prompt
@@ -47,6 +77,8 @@ const LIMITS = {
 };
 
 module.exports = {
+  resolveCorsOrigins,
+  LOCAL_DEV_ORIGIN,
   MARKETPLACE,
   CATEGORIES,
   CONDITIONS,
