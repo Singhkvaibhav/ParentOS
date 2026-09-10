@@ -367,3 +367,68 @@ describe("startup configuration validation", () => {
     expect(ok).toBe(true);
   });
 });
+
+// Behind a reverse proxy, req.ip is the proxy's address unless Express is
+// told how many hops to trust. That silently breaks per-IP rate limiting
+// (one shared bucket for everyone), login history, suspicious-login
+// detection and password-reset attribution.
+describe("proxy trust", () => {
+  const express = require("express");
+
+  function ipBehind(hops, forwardedFor) {
+    return new Promise((resolve) => {
+      const app = express();
+      if (hops !== null) app.set("trust proxy", hops);
+      app.get("/", (req, res) => res.json({ ip: req.ip }));
+      const server = app.listen(0, async () => {
+        const res = await fetch(`http://127.0.0.1:${server.address().port}/`, {
+          headers: { "X-Forwarded-For": forwardedFor },
+        });
+        const { ip } = await res.json();
+        server.close(() => resolve(ip));
+      });
+    });
+  }
+
+  test("without trust proxy the client IP is lost", async () => {
+    expect(await ipBehind(null, "203.0.113.7")).toBe("127.0.0.1");
+  });
+
+  test("trusting one hop recovers the real client IP", async () => {
+    expect(await ipBehind(1, "203.0.113.7")).toBe("203.0.113.7");
+  });
+
+  // The reason the setting is a hop COUNT and not `true`.
+  test("a hop count resists a forged X-Forwarded-For chain", async () => {
+    // An attacker prepends addresses hoping to be seen as one of them.
+    // With one trusted hop, only the address nginx itself appended counts.
+    expect(await ipBehind(1, "1.1.1.1, 2.2.2.2, 203.0.113.7")).toBe("203.0.113.7");
+    // `true` trusts the whole chain, so the attacker picks their own IP -
+    // and walks through every per-IP limit.
+    expect(await ipBehind(true, "1.1.1.1, 2.2.2.2, 203.0.113.7")).toBe("1.1.1.1");
+  });
+
+  test("the server enables it in production and not in development", () => {
+    const src = require("fs").readFileSync(require("path").join(__dirname, "..", "server.js"), "utf8");
+    expect(src).toMatch(/trust proxy/);
+    // Guarded, because trusting a header nobody sets in development would
+    // be the same spoofing hole with no upside.
+    expect(src).toMatch(/NODE_ENV === "production"[\s\S]{0,200}trust proxy/);
+  });
+});
+
+// The build accepted VITE_API_BASE while the app read VITE_API_URL, so a
+// custom API URL passed at build time was silently ignored.
+describe("frontend build configuration", () => {
+  test("the Dockerfile sets the variable the app actually reads", () => {
+    const fs = require("fs");
+    const path = require("path");
+    const root = path.join(__dirname, "..", "..");
+    const dockerfile = fs.readFileSync(path.join(root, "frontend", "Dockerfile"), "utf8");
+    const apiClient = fs.readFileSync(path.join(root, "frontend", "src", "services", "api.js"), "utf8");
+
+    const readByApp = /import\.meta\.env\.(VITE_[A-Z_]+)/.exec(apiClient)[1];
+    expect(dockerfile).toMatch(new RegExp(`ARG ${readByApp}`));
+    expect(dockerfile).toMatch(new RegExp(`ENV ${readByApp}=`));
+  });
+});

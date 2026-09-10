@@ -15,8 +15,12 @@ COPY . .
 # build arg rather than a runtime env var. Defaults to a relative path,
 # which is correct behind the reverse proxy: same origin, so the session
 # cookie is first-party.
-ARG VITE_API_BASE=/api
-ENV VITE_API_BASE=$VITE_API_BASE
+# Must match what the app reads (src/services/api.js: VITE_API_URL).
+# These had drifted - the build accepted VITE_API_BASE and the app read
+# VITE_API_URL, so a custom API URL passed at build time was silently
+# ignored and the app fell back to its default.
+ARG VITE_API_URL=/api
+ENV VITE_API_URL=$VITE_API_URL
 RUN npm run build
 
 # --- Static output --------------------------------------------------------

@@ -52,6 +52,31 @@ const reconciliationRoutes = require("./reconciliation/routes");
 const privacyRoutes = require("./privacy/routes");
 
 const app = express();
+
+// Behind a reverse proxy, every request arrives from the proxy's address.
+// Without this, req.ip is the nginx container's IP for ALL traffic, which
+// quietly breaks four things that assume it identifies a client:
+//
+//   - per-IP rate limits become one shared bucket for the entire user
+//     population, so the first few failed logins anywhere lock out
+//     everyone
+//   - login history records the proxy instead of the user
+//   - suspicious-login detection compares proxy IP to proxy IP and never
+//     fires
+//   - password-reset requests are all attributed to the same address
+//
+// The value is a HOP COUNT, not a boolean. `1` means "trust exactly one
+// proxy in front of me" - the nginx in docker-compose.yml. Setting `true`
+// would trust the whole X-Forwarded-For chain, letting a client spoof its
+// own IP by sending the header itself and walk straight through the rate
+// limits this is meant to fix. If a CDN or load balancer is added in
+// front, this number must go up to match, and no further.
+//
+// Only in production: in development there is no proxy, and trusting a
+// header nobody sets would be the same spoofing hole with no upside.
+if (process.env.NODE_ENV === "production") {
+  app.set("trust proxy", Number(process.env.TRUSTED_PROXY_HOPS || 1));
+}
 // First in the chain so even requests rejected later (CORS, CSRF, bad
 // body) still produce a log line with timing and status.
 // Security headers. These cost nothing and close a category of attacks

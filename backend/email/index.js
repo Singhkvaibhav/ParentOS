@@ -8,6 +8,7 @@
 
 const nodemailer = require("nodemailer");
 const logger = require("../logger");
+const { BRAND } = require("../config");
 
 // (P1 #6) User-controlled values must never reach an HTML email body
 // unescaped. A display name of `<img src=x onerror=...>` or an injected
@@ -52,8 +53,8 @@ async function sendWithRetry(mailOptions, attempts = 2) {
 }
 
 async function sendVerificationEmail(to, name, code) {
-  const subject = "Verify your Uusiksi account";
-  const text = `Hi ${name},\n\nYour verification code is: ${code}\n\nThis code expires in 15 minutes.\n\n- Uusiksi`;
+  const subject = `Verify your ${BRAND} account`;
+  const text = `Hi ${name},\n\nYour verification code is: ${code}\n\nThis code expires in 15 minutes.\n\n- ${BRAND}`;
   const html = `<p>Hi ${escapeHtml(name)},</p><p>Your verification code is:</p><h2 style="letter-spacing:0.2em">${escapeHtml(code)}</h2><p>This code expires in 15 minutes.</p>`;
 
   if (!SMTP_CONFIGURED) {
@@ -71,7 +72,7 @@ async function sendVerificationEmail(to, name, code) {
 
   try {
     await sendWithRetry({
-      from: process.env.SMTP_FROM || `"Uusiksi" <no-reply@uusiksi.example>`,
+      from: process.env.SMTP_FROM || `"${BRAND}" <no-reply@uusiksi.example>`,
       to,
       subject,
       text,
@@ -102,7 +103,7 @@ async function sendNotificationEmail(to, subject, body) {
 
   try {
     await sendWithRetry({
-      from: process.env.SMTP_FROM || `"Uusiksi" <no-reply@uusiksi.example>`,
+      from: process.env.SMTP_FROM || `"${BRAND}" <no-reply@uusiksi.example>`,
       to,
       subject,
       text: body,

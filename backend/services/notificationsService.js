@@ -2,6 +2,7 @@ const { query } = require("../db");
 const { parseId } = require("../utils/validation");
 const { sendNotificationEmail } = require("../email");
 const logger = require("../logger");
+const { BRAND } = require("../config");
 
 class NotificationError extends Error {
   constructor(status, message) {
@@ -31,7 +32,7 @@ async function create({ userId, type, title, body, listingId = null, conversatio
   const user = userRows[0];
   if (!user || !user.email_notifications) return notification;
 
-  const emailBody = `Hi ${user.name},\n\n${title}${body ? `\n\n${body}` : ""}\n\nOpen Uusiksi: ${FRONTEND_URL}\n\n- Uusiksi\n\nTo stop these emails, turn off notifications in your profile.`;
+  const emailBody = `Hi ${user.name},\n\n${title}${body ? `\n\n${body}` : ""}\n\nOpen ${BRAND}: ${FRONTEND_URL}\n\n- ${BRAND}\n\nTo stop these emails, turn off notifications in your profile.`;
   const result = await sendNotificationEmail(user.email, title, emailBody);
   if (result.sent) {
     await query("UPDATE notifications SET emailed_at = now() WHERE id = $1", [notification.id]);

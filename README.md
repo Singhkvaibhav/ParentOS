@@ -37,6 +37,56 @@ proper local dev setup you can open in VS Code, extend, and eventually
 deploy. The artifact version still exists as a backup for quick, no-setup
 demos - this project is for real development.
 
+## Thirty-fifth round: account deletion was broken, and Express didn't trust nginx
+
+**Account deletion failed outright for any seller who had sold something.**
+The anonymization set `area = NULL`, but `city`, `area` and `pincode` are
+`NOT NULL`, so the whole deletion transaction aborted. A seller with a
+single sold listing could not delete their account at all - a GDPR Article
+17 request the system was structurally incapable of honouring.
+
+The bug survived because my deletion tests only ever deleted **buyers**.
+Reproduced it directly before fixing, then fixed it by overwriting rather
+than nulling. That also closed a second problem the reviewer spotted:
+`city` and `pincode` weren't being cleared at all, so a deleted user's
+neighbourhood and postcode remained attached to a listing that is supposed
+to be anonymized. Three tests now cover it, including an invariant across
+every deleted user in the suite.
+
+**Express didn't trust the proxy.** nginx sets `X-Forwarded-For`, but
+without `app.set("trust proxy", ...)` `req.ip` is the nginx container's
+address for every request. That quietly breaks four things at once: per-IP
+rate limits collapse into one shared bucket for the entire user population
+(so a handful of failed logins anywhere locks out everyone), login history
+records the proxy, suspicious-login detection compares proxy to proxy and
+never fires, and password-reset requests all attribute to one address.
+
+Set to a **hop count**, not `true`, and demonstrated why:
+
+| setting | forged `X-Forwarded-For: 1.1.1.1, 2.2.2.2, 203.0.113.7` |
+|---|---|
+| unset | `127.0.0.1` — the proxy, the bug |
+| `1` | `203.0.113.7` — the address nginx appended |
+| `true` | `1.1.1.1` — attacker's choice, straight through the limits |
+
+`true` would let a client spoof its own IP by sending the header itself.
+Production-only, since trusting a header nobody sets in development is the
+same hole with no upside, and configurable via `TRUSTED_PROXY_HOPS` for
+anyone putting a CDN in front.
+
+**Three smaller fixes.** The frontend Dockerfile set `VITE_API_BASE` while
+the app reads `VITE_API_URL`, so a custom API URL at build time was
+silently ignored - now aligned, with a test that derives the expected name
+from the source rather than hardcoding it. The cookie policy still
+described a 30-day token and claimed refresh rotation "not yet the
+default"; it now documents both cookies accurately, including what a
+forced sign-out means for the reader. And the brand name is centralized in
+`config.BRAND` rather than scattered as literals: "Uusiksi" is the
+consumer brand, "ParentOS" the project, which is a deliberate split but was
+being carried by hardcoded strings that renaming would have missed.
+
+326 → 334 tests.
+
 ## Thirty-fourth round: the double-refund path, Scenario C, journey in CI
 
 Re-review of the previous round's items. Verified rather than assumed:
@@ -2340,7 +2390,7 @@ backend/
                   can reach Postgres as a raw type error)
   utils/          validation.js's parseId() - the body-field-id equivalent
                   of middleware/validateId.js, used inside services
-  tests/          Jest + Supertest (326 tests), run against a real
+  tests/          Jest + Supertest (334 tests), run against a real
                   parentos_test database - dbReset.js truncates it before
                   each test file, helpers.js's createVerifiedUser returns a
                   cookie-carrying supertest agent, transactions.test.js and

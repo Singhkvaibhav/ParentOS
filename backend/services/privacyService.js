@@ -2,6 +2,7 @@ const { query, withTransaction } = require("../db");
 const { revokeAllForUser } = require("./tokenService");
 const { CONCLUDED, MONEY_CAPTURED, sqlList } = require("../transactionStatus");
 const logger = require("../logger");
+const { BRAND } = require("../config");
 
 class PrivacyError extends Error {
   constructor(status, message) {
@@ -73,7 +74,7 @@ async function exportUserData(userId) {
     // Stating the scope in the file itself, so the recipient knows what was
     // deliberately excluded rather than assuming an omission is a bug.
     scope: {
-      included: "Data relating to you that Uusiksi holds.",
+      included: `Data relating to you that ${BRAND} holds.`,
       excluded: "Messages written by other people, and reports filed about you (which contain the reporter's personal data).",
     },
     profile: profile.rows[0],
@@ -144,9 +145,20 @@ async function deleteAccount(userId, { confirmEmail } = {}) {
       `DELETE FROM listings WHERE seller_id = $1 AND status <> 'sold'`,
       [userId]
     );
+    // city, area and pincode are NOT NULL, so they must be overwritten
+    // rather than nulled - setting them to NULL aborted the whole deletion
+    // transaction, which meant any seller with a sold listing could not
+    // delete their account at all. The bug was invisible because the
+    // deletion tests only ever deleted buyers.
+    //
+    // They also have to be cleared, not just left: a sold listing is
+    // retained as the transaction's reference, and keeping the
+    // neighbourhood and postcode on it would leave the deleted user's
+    // location attached to a record that is supposed to be anonymized.
     await tx(
       `UPDATE listings SET title = '[removed]', description = NULL, photo_url = NULL,
-                           area = NULL, lat = NULL, lng = NULL
+                           city = '[removed]', area = '[removed]', pincode = '[removed]',
+                           lat = NULL, lng = NULL
        WHERE seller_id = $1`,
       [userId]
     );

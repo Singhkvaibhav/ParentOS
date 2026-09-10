@@ -63,6 +63,15 @@ function resolveCorsOrigins() {
   };
 }
 
+// Consumer-facing brand name, deliberately distinct from the project name.
+//
+// "Uusiksi" is what users see - emails, the privacy policy, the site title.
+// "ParentOS" is the repository, the database and the internal project. That
+// split is intentional, but it was previously carried by hardcoded strings
+// scattered across the email templates and the privacy service, so renaming
+// or white-labelling meant hunting literals and inevitably missing some.
+const BRAND = process.env.BRAND_NAME || "Uusiksi";
+
 const LIMITS = {
   // (P1 #3) Messages were unbounded - a single 300KB message would be
   // stored, re-sent in every thread fetch, and fed to the AI as prompt
@@ -77,6 +86,7 @@ const LIMITS = {
 };
 
 module.exports = {
+  BRAND,
   resolveCorsOrigins,
   LOCAL_DEV_ORIGIN,
   MARKETPLACE,

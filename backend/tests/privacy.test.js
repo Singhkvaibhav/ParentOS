@@ -207,3 +207,56 @@ describe("account deletion", () => {
     expect(rows[0].rating).toBe(5);
   });
 });
+
+// This case was the gap: the existing deletion tests only ever deleted
+// BUYERS, so nothing exercised a seller with a retained sold listing - and
+// that path failed outright, because city/area/pincode are NOT NULL and
+// the anonymization set area to NULL. Any seller who had sold anything
+// could not delete their account at all.
+describe("deleting a seller who has sold something", () => {
+  test("succeeds, rather than aborting on a NOT NULL constraint", async () => {
+    const seller = await createVerifiedUser(app, { email: "solddelete@example.com" });
+    const buyer = await createVerifiedUser(app, { email: "solddeletebuyer@example.com" });
+    const listing = await listingFor(seller.agent, { title: "Sold before deletion" });
+    await completedSale(seller.agent, buyer.agent, listing.id);
+
+    const res = await seller.agent.post("/api/privacy/delete-account")
+      .send({ confirmEmail: "solddelete@example.com" });
+    expect(res.status).toBe(200);
+  });
+
+  test("the retained listing keeps no location data", async () => {
+    const seller = await createVerifiedUser(app, { email: "locdelete@example.com" });
+    const buyer = await createVerifiedUser(app, { email: "locdeletebuyer@example.com" });
+    const listing = await listingFor(seller.agent, { title: "Located item" });
+    await completedSale(seller.agent, buyer.agent, listing.id);
+
+    await seller.agent.post("/api/privacy/delete-account").send({ confirmEmail: "locdelete@example.com" });
+
+    const { rows } = await query(
+      "SELECT title, city, area, pincode, lat, lng, description, photo_url FROM listings WHERE id = $1",
+      [listing.id]
+    );
+    // The row survives as the transaction's reference, but a deleted user's
+    // neighbourhood and postcode must not survive with it.
+    expect(rows).toHaveLength(1);
+    expect(rows[0].city).toBe("[removed]");
+    expect(rows[0].area).toBe("[removed]");
+    expect(rows[0].pincode).toBe("[removed]");
+    expect(rows[0].lat).toBeNull();
+    expect(rows[0].lng).toBeNull();
+    expect(rows[0].description).toBeNull();
+    expect(rows[0].photo_url).toBeNull();
+  });
+
+  test("no listing anywhere retains location data for a deleted user", async () => {
+    // The invariant, checked across everything this suite has deleted.
+    const { rows } = await query(`
+      SELECT l.id FROM listings l
+      JOIN users u ON u.id = l.seller_id
+      WHERE u.deleted_at IS NOT NULL
+        AND (l.city <> '[removed]' OR l.area <> '[removed]' OR l.lat IS NOT NULL)
+    `);
+    expect(rows).toEqual([]);
+  });
+});

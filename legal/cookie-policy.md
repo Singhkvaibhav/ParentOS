@@ -6,13 +6,31 @@ Last updated: [FILL IN]
 
 ## Cookies this service sets
 
-This list is taken from the application code, not from a template. If the
-code changes, this must change with it.
+Taken from the application code, not from a template. If the code changes,
+this must change with it — a cookie policy that misdescribes what is stored
+is worse than none.
 
 | Cookie | Purpose | Type | Lifetime |
 |---|---|---|---|
-| `parentos_token` | Keeps you signed in. Contains a signed session token; `httpOnly` so page scripts cannot read it, and `SameSite=Lax`. | Strictly necessary | 30 days [REVIEW: shortening to a 15-minute access token with refresh rotation is implemented in `tokenService` but not yet the default] |
-| `parentos_csrf` | Prevents another website from performing actions in your account. Readable by our own page so it can echo the value back in a header. | Strictly necessary | Session |
+| `parentos_token` | Keeps you signed in. A short-lived access token, `httpOnly` so page scripts cannot read it, `SameSite=Lax`, and `Secure` in production. | Strictly necessary | 15 minutes |
+| `parentos_refresh` | Renews your sign-in without asking for your password again. Scoped to `/api/auth`, so it is not sent with ordinary requests. `httpOnly`, `SameSite=Lax`, `Secure` in production. | Strictly necessary | 30 days |
+| `parentos_csrf` | Stops another website performing actions in your account. Readable by our own page, which is how the protection works. | Strictly necessary | Session |
+
+### How the sign-in cookies work together
+
+The access cookie is deliberately short-lived, so a copied one stops being
+useful within minutes. The refresh cookie renews it, and **rotates on every
+use** — each renewal invalidates the previous refresh token.
+
+That rotation is also how theft is detected. If a refresh token is
+presented twice, two parties hold the same credential, so every session in
+that chain is ended and you are asked to sign in again. If that happens to
+you unexpectedly, change your password: it may mean someone else had a copy
+of your session.
+
+Signing out revokes the refresh token on our servers, not just in your
+browser — a cookie your browser forgets is still valid to anyone who copied
+it. "Sign out everywhere" revokes all of them.
 
 ## Cookies this service does NOT set
 
