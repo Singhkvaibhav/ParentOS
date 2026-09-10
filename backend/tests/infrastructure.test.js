@@ -216,14 +216,10 @@ describe("operational endpoints", () => {
     expect(res.body.checks).toHaveProperty("queue");
   });
 
-  test("metrics are Prometheus text format with pool saturation exposed", async () => {
-    const res = await request(app).get("/metrics");
-    expect(res.status).toBe(200);
-    expect(res.headers["content-type"]).toMatch(/text\/plain/);
-    // The gauge that warns before users feel slowness.
-    expect(res.text).toContain("parentos_db_pool_waiting");
-    expect(res.text).toContain("# TYPE parentos_uptime_seconds gauge");
-  });
+  // Metrics deliberately moved OFF the public app to their own internal
+  // listener - see the "metrics are not on the public application" block
+  // below. This test previously asserted a 200 here, which is now exactly
+  // the thing that must not happen.
 });
 
 describe("startup configuration validation", () => {
@@ -524,5 +520,97 @@ describe("reverse reconciliation: Stripe -> database", () => {
       process.env.STRIPE_SECRET_KEY = original;
       jest.resetModules();
     }
+  });
+});
+
+// Metrics expose pool saturation and, more sensitively,
+// parentos_reconciliation_open_issues - which says "money is currently
+// wrong here". They were a route on the public app protected only by an
+// nginx allow/deny block, making one config line the entire boundary.
+describe("metrics are not on the public application", () => {
+  const request = require("supertest");
+
+  test("the public app has no /metrics route", async () => {
+    const res = await request(app).get("/metrics");
+    // 404, not 401 or 403: the route does not exist to be protected.
+    expect(res.status).toBe(404);
+  });
+
+  test("no route anywhere in the app serves metrics", () => {
+    const fs = require("fs");
+    const path = require("path");
+    const src = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
+    // Guards against someone reinstating it for convenience later.
+    expect(src).not.toMatch(/app\.(get|use)\(\s*["'`]\/metrics/);
+  });
+
+  test("nginx no longer proxies /metrics either", () => {
+    const fs = require("fs");
+    const path = require("path");
+    const conf = path.join(__dirname, "..", "..", "deploy", "nginx", "parentos.conf");
+    if (!fs.existsSync(conf)) return;
+    // A location block here would re-expose the data through the public
+    // server, which is exactly what moving it off the app was for.
+    expect(fs.readFileSync(conf, "utf8")).not.toMatch(/location\s*=\s*\/metrics\s*\{/);
+  });
+
+  test("the compose file does not publish the metrics port to the host", () => {
+    const fs = require("fs");
+    const path = require("path");
+    const file = path.join(__dirname, "..", "..", "docker-compose.yml");
+    if (!fs.existsSync(file)) return;
+    const text = fs.readFileSync(file, "utf8");
+
+    // Read as text rather than parsed YAML: js-yaml isn't a dependency of
+    // this project, and adding one just to assert a port isn't published
+    // would be a poor trade.
+    //
+    // `expose` is internal-network only; `ports` publishes to the host, so
+    // 9091 must appear under the former and never the latter.
+    expect(text).toMatch(/expose:[\s\S]{0,400}?"9091"/);
+
+    const portsBlocks = text.match(/ports:\n(?:\s+-\s.*\n)+/g) || [];
+    for (const block of portsBlocks) {
+      expect(block).not.toMatch(/9091/);
+    }
+  });
+});
+
+describe("the metrics listener itself", () => {
+  const { createMetricsServer, collect } = require("../metrics");
+
+  function scrape(server, headers = {}) {
+    return new Promise((resolve) => {
+      server.listen(0, "127.0.0.1", async () => {
+        const res = await fetch(`http://127.0.0.1:${server.address().port}/metrics`, { headers });
+        const body = await res.text();
+        server.close(() => resolve({ status: res.status, body }));
+      });
+    });
+  }
+
+  test("serves Prometheus-formatted gauges", async () => {
+    const { status, body } = await scrape(createMetricsServer());
+    expect(status).toBe(200);
+    expect(body).toMatch(/# TYPE parentos_db_pool_total gauge/);
+    expect(body).toMatch(/parentos_uptime_seconds \d+/);
+  });
+
+  test("only answers GET /metrics", async () => {
+    const server = createMetricsServer();
+    const result = await new Promise((resolve) => {
+      server.listen(0, "127.0.0.1", async () => {
+        const res = await fetch(`http://127.0.0.1:${server.address().port}/anything-else`);
+        server.close(() => resolve(res.status));
+      });
+    });
+    expect(result).toBe(404);
+  });
+
+  test("a scrape still succeeds when a gauge's table is missing", async () => {
+    // Metrics must never fail wholesale because one query didn't work -
+    // losing all monitoring is a worse outcome than losing one number.
+    const body = await collect();
+    expect(body).toMatch(/parentos_uptime_seconds/);
   });
 });

@@ -37,6 +37,46 @@ proper local dev setup you can open in VS Code, extend, and eventually
 deploy. The artifact version still exists as a backup for quick, no-setup
 demos - this project is for real development.
 
+## Thirty-seventh round: metrics off the public application
+
+`/metrics` was a route on the public app, protected only by an nginx
+`allow`/`deny` block. That made one config line the entire boundary around
+operational data - and `parentos_reconciliation_open_issues` in particular
+means "money is currently wrong here and nobody has looked", which is not a
+number to leave one mistyped `location` away from the internet. A reload
+that didn't take, or a direct hit on the container port, would have exposed
+it too.
+
+Took the reviewer's preferred option: removed it from the application
+entirely rather than adding auth to it. Metrics now run on their own
+listener (`metrics.js`, port 9091), bound to `127.0.0.1` by default so
+nothing off-host can reach it even if a port were accidentally published.
+Compose sets `METRICS_HOST=0.0.0.0` and lists the port under `expose:`,
+never `ports:`, so it is reachable on the internal network and nowhere
+else. An optional `METRICS_TOKEN` adds bearer auth as defence in depth -
+explicitly not the primary control, since the network boundary is.
+
+The nginx `location = /metrics` block is gone: there is nothing behind it
+now, and leaving it would imply the endpoint is still reachable through the
+public server.
+
+Verified both halves live: the public app returns **404** for `/metrics`
+while the internal listener serves the gauges, and with a token configured
+it returns 401 for no token, a wrong token, and a wrong-*length* token -
+that last one because `timingSafeEqual` throws on mismatched lengths, so
+the length check has to come first rather than leaking through an
+exception.
+
+Guarded against regression in four places: the public app must 404, no
+`app.get("/metrics")` may exist in `server.js`, nginx must not proxy it,
+and the compose file must not publish 9091 under `ports:`. `npm run verify`
+now smoke-tests the 404 as well.
+
+An existing test asserted `/metrics` returned 200 on the public app -
+exactly the behaviour that is now wrong. Replaced rather than adapted.
+
+339 → 345 tests.
+
 ## Thirty-sixth round: monitoring the distributed checkout window
 
 A review noted that checkout spans Postgres, then Stripe, then Postgres
@@ -2497,7 +2537,7 @@ backend/
                   can reach Postgres as a raw type error)
   utils/          validation.js's parseId() - the body-field-id equivalent
                   of middleware/validateId.js, used inside services
-  tests/          Jest + Supertest (339 tests), run against a real
+  tests/          Jest + Supertest (345 tests), run against a real
                   parentos_test database - dbReset.js truncates it before
                   each test file, helpers.js's createVerifiedUser returns a
                   cookie-carrying supertest agent, transactions.test.js and

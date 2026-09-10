@@ -62,6 +62,10 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgres://parentos:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/parentos
       REDIS_URL: redis://redis:6379
+      # 0.0.0.0 inside the container so other containers on the compose
+      # network can scrape it. The container's network namespace is the
+      # boundary; the port is never published to the host.
+      METRICS_HOST: 0.0.0.0
     depends_on:
       postgres:
         condition: service_healthy
@@ -70,6 +74,11 @@ services:
     # No `ports` - only the proxy reaches the API.
     expose:
       - "4000"
+      # Internal only. `expose` publishes nothing to the host - a scraper on
+      # the compose network can reach it, the internet cannot. Moving this
+      # to `ports:` would undo the whole point of separating metrics from
+      # the public app.
+      - "9091"
     volumes:
       # Only used when S3 isn't configured. A named volume means images
       # survive a redeploy, though not a move to another host - which is
@@ -88,6 +97,10 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgres://parentos:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/parentos
       REDIS_URL: redis://redis:6379
+      # 0.0.0.0 inside the container so other containers on the compose
+      # network can scrape it. The container's network namespace is the
+      # boundary; the port is never published to the host.
+      METRICS_HOST: 0.0.0.0
     depends_on:
       postgres:
         condition: service_healthy

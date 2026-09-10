@@ -224,41 +224,6 @@ app.get("/api/ready", async (req, res) => {
   res.status(ready ? 200 : 503).json({ ready, checks });
 });
 
-// Operational metrics in Prometheus text format. Deliberately minimal and
-// deliberately NOT business analytics - that already exists at
-// /api/analytics. This answers "is the service healthy", which is a
-// different question asked by different people at different times.
-app.get("/metrics", async (req, res) => {
-  const lines = [];
-  const gauge = (name, help, value) => {
-    lines.push(`# HELP ${name} ${help}`, `# TYPE ${name} gauge`, `${name} ${value}`);
-  };
-
-  const mem = process.memoryUsage();
-  gauge("parentos_uptime_seconds", "Process uptime.", Math.round(process.uptime()));
-  gauge("parentos_heap_used_bytes", "V8 heap in use.", mem.heapUsed);
-  gauge("parentos_db_pool_total", "Postgres pool connections.", pool.totalCount ?? 0);
-  gauge("parentos_db_pool_idle", "Idle pool connections.", pool.idleCount ?? 0);
-  // A persistently non-zero waiting count means the pool is undersized -
-  // the signal that arrives before users notice slowness.
-  gauge("parentos_db_pool_waiting", "Requests waiting for a connection.", pool.waitingCount ?? 0);
-
-  try {
-    // Unresolved payment discrepancies: the one business number that
-    // belongs in operational monitoring, because it means money is
-    // currently wrong and nobody has looked.
-    const { rows } = await pool.query(
-      "SELECT COUNT(*) AS n FROM reconciliation_issues WHERE status = 'open'"
-    );
-    gauge("parentos_reconciliation_open_issues", "Unresolved payment discrepancies.", Number(rows[0].n));
-  } catch {
-    // Table may not exist yet on a fresh database - metrics must never
-    // fail the scrape.
-  }
-
-  res.set("Content-Type", "text/plain; version=0.0.4").send(lines.join("\n") + "\n");
-});
-
 app.use((err, req, res, next) => {
   // Goes through errorTracking rather than straight to the logger, so
   // unexpected 500s reach whatever tracker is configured. It logs locally
@@ -277,6 +242,13 @@ app.use((err, req, res, next) => {
 // unlike the old synchronous SQLite file access) - `dbReady` is exported so
 // the test suite can await it before running anything, and the real server
 // only starts accepting connections once it resolves.
+// Metrics run on their own internal listener (see metrics.js), so the
+// public app has no /metrics route at all - nginx is no longer the only
+// thing standing between operational data and the internet.
+if (process.env.NODE_ENV !== "test") {
+  require("./metrics").startMetricsServer();
+}
+
 const dbReady = initDb();
 
 const PORT = process.env.PORT || 4000;

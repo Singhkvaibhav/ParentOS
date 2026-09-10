@@ -141,3 +141,29 @@ dependency; wiring `rate-limit-redis` is the remaining step.
 - **No staging environment.** Changes would go straight from a laptop to
   production, which is the riskiest possible arrangement for a system
   handling payments.
+
+## Metrics
+
+Metrics are **not** served by the public application. They run on a
+separate listener inside the API container, port `9091`, path `/metrics`.
+
+That separation is deliberate. Previously `/metrics` was a route on the
+public app protected only by an nginx `allow`/`deny` block, which made one
+config line the entire boundary around operational data - including
+`parentos_reconciliation_open_issues`, which means "money is currently
+wrong and nobody has looked". A mistyped location, a reload that didn't
+take, or a direct hit on the container port would have exposed it.
+
+- `METRICS_PORT` (default `9091`)
+- `METRICS_HOST` (default `127.0.0.1`; compose sets `0.0.0.0` so other
+  containers on the internal network can scrape it)
+- `METRICS_TOKEN` (optional bearer token — defence in depth, not the
+  primary control; the network boundary is)
+
+The port is under `expose:` in `docker-compose.yml`, never `ports:`, so it
+is reachable on the compose network and not published to the host. Point
+Prometheus at `api:9091` from within that network.
+
+**Do not** add a `location = /metrics` block back to nginx. There is
+nothing behind it, and re-adding one would re-expose the data through the
+public server, which is what moving it off the app was for.

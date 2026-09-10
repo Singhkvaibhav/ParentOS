@@ -74,6 +74,10 @@ smoke "marketplace config" "/api/meta/config"        "200"
 smoke "auth required"      "/api/transactions/mine"  "401"
 smoke "admin required"     "/api/analytics/platform" "401"
 smoke "privacy export gated" "/api/privacy/export"   "401"
+# Must NOT exist on the public app: operational data (including unresolved
+# payment discrepancies) moved to a separate internal listener, and a 200
+# here would mean it had been reinstated.
+smoke "metrics off public app" "/metrics"             "404"
 
 kill "$SERVER_PID" 2>/dev/null || true
 
