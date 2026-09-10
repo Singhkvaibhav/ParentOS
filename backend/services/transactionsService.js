@@ -65,6 +65,20 @@ async function checkout(buyerId, { listingId: listingIdInput, deliveryMethod }) 
     throw new TransactionError(409, "This listing is no longer available - someone else may have just bought it.");
   }
 
+  // Checkout spans two systems: reserve here, call Stripe, then persist
+  // here. Between the reservation and the final write there is a window in
+  // which a crash leaves a reserved listing, and possibly a live
+  // PaymentIntent, with no completed order. The expiry sweep and
+  // reconciliation both clean up after that, but neither measures how
+  // often or how long it is open.
+  //
+  // Timing it turns "probably fine at MVP scale" into something with
+  // evidence behind it - and gives a concrete trigger for replacing this
+  // with an explicit checkout-attempt record (see README) rather than
+  // guessing when scale demands it.
+  const windowStartedAt = process.hrtime.bigint();
+  const windowMs = () => Number(process.hrtime.bigint() - windowStartedAt) / 1e6;
+
   // Integer cents throughout - no floats, no round2(), nothing to drift.
   // The only place a fractional cent could arise is the percentage-of-cents
   // commission calculation, so that's the one spot with a single, isolated
@@ -146,7 +160,13 @@ async function checkout(buyerId, { listingId: listingIdInput, deliveryMethod }) 
       return inserted;
     });
   } catch (e) {
-    logger.error("transaction_persist_failed", { paymentIntentId: paymentIntent.id, listingId, err: e });
+    // Logged at error with the window duration: this is the failure mode
+    // the distributed checkout can produce, so its frequency should be
+    // visible rather than inferred.
+    logger.error("checkout_window_failed", {
+      paymentIntentId: paymentIntent.id, listingId,
+      windowMs: Math.round(windowMs()), err: e,
+    });
     try {
       await stripe.paymentIntents.cancel(paymentIntent.id);
     } catch (cancelError) {
@@ -155,6 +175,13 @@ async function checkout(buyerId, { listingId: listingIdInput, deliveryMethod }) 
     await releaseReservation(listingId);
     throw new TransactionError(500, "Couldn't complete checkout - please try again.");
   }
+
+  // Baseline for the window above. Without a success measurement the
+  // failure logs have nothing to be compared against, and "how exposed are
+  // we?" stays a matter of opinion.
+  logger.info("checkout_window_closed", {
+    listingId, transactionId: rows[0].id, windowMs: Math.round(windowMs()),
+  });
 
   return {
     transaction: rows[0],

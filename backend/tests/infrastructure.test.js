@@ -3,8 +3,9 @@ require("../tests/setupEnv");
 // Reconciliation talks to Stripe, so the client is mocked to return
 // whatever each test needs the "other system" to believe.
 const mockRetrieve = jest.fn();
+const mockList = jest.fn().mockResolvedValue({ data: [] });
 jest.mock("stripe", () => jest.fn().mockImplementation(() => ({
-  paymentIntents: { retrieve: mockRetrieve, create: jest.fn(), cancel: jest.fn() },
+  paymentIntents: { retrieve: mockRetrieve, list: mockList, create: jest.fn(), cancel: jest.fn() },
   refunds: { create: jest.fn() },
   webhooks: { constructEvent: jest.fn() },
   accounts: { create: jest.fn(), retrieve: jest.fn() },
@@ -430,5 +431,98 @@ describe("frontend build configuration", () => {
     const readByApp = /import\.meta\.env\.(VITE_[A-Z_]+)/.exec(apiClient)[1];
     expect(dockerfile).toMatch(new RegExp(`ARG ${readByApp}`));
     expect(dockerfile).toMatch(new RegExp(`ENV ${readByApp}=`));
+  });
+});
+
+
+// The forward pass walks transactions and asks Stripe about each, so it can
+// only find problems with rows that EXIST. A PaymentIntent created during
+// checkout whose transaction row was never written has nothing to walk
+// from - which is exactly what the reservation window can produce.
+describe("reverse reconciliation: Stripe -> database", () => {
+  const { findOrphanedPaymentIntents } = require("../services/reconciliationService");
+
+  beforeEach(() => { mockList.mockReset(); });
+
+  test("a PaymentIntent with no local transaction is flagged", async () => {
+    mockList.mockResolvedValue({
+      data: [{ id: "pi_orphan_1", status: "succeeded", amount: 4200 }],
+    });
+
+    const result = await findOrphanedPaymentIntents();
+    expect(result.orphans).toBe(1);
+
+    const { rows } = await query(
+      "SELECT issue_type, stripe_amount_cents FROM reconciliation_issues WHERE stripe_payment_intent_id = $1",
+      ["pi_orphan_1"]
+    );
+    expect(rows[0].issue_type).toBe("orphaned_payment_intent");
+    expect(rows[0].stripe_amount_cents).toBe(4200);
+  });
+
+  test("a PaymentIntent that DOES have a local row is not flagged", async () => {
+    const { createVerifiedUser } = require("./helpers");
+    const u = await createVerifiedUser(app, { email: `notorphan${Date.now()}@example.com` });
+    const listing = await query(
+      `INSERT INTO listings (seller_id,category,title,price_cents,condition,city,area,pincode,status)
+       VALUES ($1,'toys','x',100,'Good','Helsinki','Kamppi','00100','sold') RETURNING id`,
+      [u.user.id]
+    );
+    await query(
+      `INSERT INTO transactions (listing_id,buyer_id,seller_id,item_amount_cents,delivery_method,
+         delivery_fee_cents,commission_amount_cents,total_amount_cents,status,stripe_payment_intent_id)
+       VALUES ($1,$2,$2,100,'pickup',0,8,100,'paid','pi_known_1')`,
+      [listing.rows[0].id, u.user.id]
+    );
+
+    mockList.mockResolvedValue({ data: [{ id: "pi_known_1", status: "succeeded", amount: 100 }] });
+    const result = await findOrphanedPaymentIntents();
+    expect(result.orphans).toBe(0);
+  });
+
+  // An abandoned checkout is not an orphan: no money is at stake, and
+  // flagging them would bury the cases that matter.
+  test("an unpaid or cancelled PaymentIntent is ignored", async () => {
+    mockList.mockResolvedValue({
+      data: [
+        { id: "pi_abandoned", status: "requires_payment_method", amount: 500 },
+        { id: "pi_cancelled", status: "canceled", amount: 500 },
+      ],
+    });
+    const result = await findOrphanedPaymentIntents();
+    expect(result.orphans).toBe(0);
+  });
+
+  // transaction_id is NULL for an orphan, and NULL <> NULL in SQL - so the
+  // original unique index would have let every pass insert another copy.
+  test("the same orphan is not re-reported on every pass", async () => {
+    mockList.mockResolvedValue({ data: [{ id: "pi_orphan_dup", status: "succeeded", amount: 900 }] });
+
+    const first = await findOrphanedPaymentIntents();
+    const second = await findOrphanedPaymentIntents();
+    expect(first.orphans).toBe(1);
+    expect(second.orphans).toBe(0);
+
+    const { rows } = await query(
+      "SELECT COUNT(*) AS n FROM reconciliation_issues WHERE stripe_payment_intent_id = $1",
+      ["pi_orphan_dup"]
+    );
+    expect(Number(rows[0].n)).toBe(1);
+  });
+
+  test("it degrades quietly when Stripe isn't configured", async () => {
+    const original = process.env.STRIPE_SECRET_KEY;
+    delete process.env.STRIPE_SECRET_KEY;
+    jest.resetModules();
+    try {
+      const svc = require("../services/reconciliationService");
+      const result = await svc.findOrphanedPaymentIntents();
+      // Reports that it skipped rather than throwing - reconciliation
+      // running with one blind half is better than not running.
+      expect(result.checked).toBe(0);
+    } finally {
+      process.env.STRIPE_SECRET_KEY = original;
+      jest.resetModules();
+    }
   });
 });

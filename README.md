@@ -37,6 +37,48 @@ proper local dev setup you can open in VS Code, extend, and eventually
 deploy. The artifact version still exists as a backup for quick, no-setup
 demos - this project is for real development.
 
+## Thirty-sixth round: monitoring the distributed checkout window
+
+A review noted that checkout spans Postgres, then Stripe, then Postgres
+again, with cleanup rather than atomicity covering the gap - and that this
+is probably acceptable for an MVP **with strong monitoring**, but should be
+redesigned around explicit checkout attempts before scale.
+
+I took that framing literally rather than rushing the redesign, and
+checking the monitoring found a real hole.
+
+**Reconciliation was blind in exactly the direction that matters.** It
+walked transactions and asked Stripe about each one, so it could only find
+problems with rows that EXIST. A PaymentIntent created during checkout
+whose transaction row was never written has nothing to walk from - which
+is precisely the failure this design produces. Money authorized at Stripe
+that the database has never heard of, and nothing looking for it.
+
+Added a reverse pass (Stripe → database) that reports
+`orphaned_payment_intent`, folded into the same job so there aren't two
+schedules to remember. Read-only like the forward pass: an orphan can also
+be a deploy in progress or a test key pointed at the wrong database, and
+cancelling on that guess could destroy a legitimate in-flight payment.
+Abandoned checkouts (`requires_payment_method`, `canceled`) are ignored -
+no money is at stake and flagging them would bury the real cases.
+
+Migration 019 needed its own index for this: `transaction_id` is NULL for
+an orphan, and NULL is never equal to NULL in SQL, so the existing unique
+index would have let every pass insert another copy of the same orphan.
+There's a test for that specifically.
+
+**The window is now measured, not assumed.** `checkout_window_closed` on
+success and `checkout_window_failed` on the failure path, both carrying
+`windowMs`. Without a success baseline the failure logs have nothing to be
+compared against, and "how exposed are we?" stays a matter of opinion.
+
+**The redesign is written down with triggers** rather than left as an
+intention - see "Planned redesign: explicit checkout attempts". Doing it
+now would be building for load nobody has measured; the instrumentation
+exists so that call gets made on evidence.
+
+334 → 339 tests.
+
 ## Thirty-fifth round: account deletion was broken, and Express didn't trust nginx
 
 **Account deletion failed outright for any seller who had sold something.**
@@ -2188,6 +2230,71 @@ A review flagged five issues; here's the current state of each:
     never cleared itself (a new toast could get wiped early by an old
     timer, and neither cleared on unmount).
 
+## Planned redesign: explicit checkout attempts
+
+Recorded here so it's a decision with a trigger rather than a vague
+intention.
+
+**The current design.** Checkout reserves the listing, calls Stripe, then
+writes the transaction:
+
+```
+UPDATE listings SET status = 'reserved'   (Postgres)
+            v
+create PaymentIntent                      (Stripe)
+            v
+INSERT transaction + audit event          (Postgres, one transaction)
+```
+
+Two systems, three steps. The middle step can succeed while the process
+dies before the third, leaving a reserved listing and possibly a live
+PaymentIntent with no order. Postgres and Stripe cannot be made atomic, so
+this cannot be closed by wrapping it in a transaction - only detected and
+cleaned up.
+
+**Why it's acceptable now.** Three independent mechanisms cover it:
+
+- the expiry sweep releases reservations older than the TTL, whether or not
+  a transaction row exists
+- the failure path cancels the PaymentIntent and releases the reservation
+- reconciliation compares both systems in **both directions** - the reverse
+  pass exists specifically because the forward pass is structurally blind
+  to a PaymentIntent whose transaction row was never written
+
+The window is also now instrumented (`checkout_window_closed` on success,
+`checkout_window_failed` on the failure path, both with `windowMs`), so its
+size and failure rate are measurable rather than assumed.
+
+**What would replace it.** An explicit checkout-attempt record written
+*before* Stripe is called:
+
+```
+INSERT checkout_attempt (pending)         (Postgres)
+            v
+create PaymentIntent, attach attempt id   (Stripe)
+            v
+attempt -> completed + transaction        (Postgres)
+```
+
+Every PaymentIntent then has a local row from the moment it exists, so an
+interrupted checkout is a row in a known state rather than something
+reconciliation has to go looking for. It also makes the attempt idempotent:
+a retried checkout finds its own attempt instead of creating a second
+PaymentIntent.
+
+**Trigger for doing it.** Any of:
+
+- `checkout_window_failed` exceeding roughly 0.1% of checkouts
+- any `orphaned_payment_intent` reaching a real customer rather than being
+  caught by reconciliation first
+- p99 `windowMs` above ~2 seconds, which widens the exposure
+- more than one API instance handling checkout for the same catalogue at
+  meaningful volume
+
+Doing it before any of those fire would be building for load that hasn't
+been measured - the instrumentation exists precisely so that call is made
+on evidence.
+
 ## Known limitations to fix before a real launch
 
 1. **Area/pincode data is a small hand-built lookup table** (in
@@ -2390,7 +2497,7 @@ backend/
                   can reach Postgres as a raw type error)
   utils/          validation.js's parseId() - the body-field-id equivalent
                   of middleware/validateId.js, used inside services
-  tests/          Jest + Supertest (334 tests), run against a real
+  tests/          Jest + Supertest (339 tests), run against a real
                   parentos_test database - dbReset.js truncates it before
                   each test file, helpers.js's createVerifiedUser returns a
                   cookie-carrying supertest agent, transactions.test.js and
