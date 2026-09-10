@@ -74,9 +74,7 @@ jobs:
 
       - name: Create Compose environment
         run: |
-          cat > .env <<'ENVFILE'
-          POSTGRES_PASSWORD=ci-postgres-password
-          ENVFILE
+          printf '%s\n' 'POSTGRES_PASSWORD=ci-postgres-password' > .env
 
       - name: Build API image
         uses: docker/build-push-action@v5
@@ -144,22 +142,18 @@ jobs:
       #                      process inside the container actually reads
       - name: Create environment files for the stack
         run: |
-          cat > .env <<'ENVFILE'
-          POSTGRES_PASSWORD=ci-postgres-password
-          ENVFILE
-
-          cat > .env.production <<'ENVFILE'
-          JWT_SECRET=ci-jwt-secret-that-is-long-enough-for-validation-000000
-          CORS_ORIGINS=https://ci.example
-          FRONTEND_URL=https://ci.example
-          STRIPE_SECRET_KEY=sk_test_ci
-          STRIPE_WEBHOOK_SECRET=whsec_ci
-          SMTP_HOST=smtp.example
-          S3_BUCKET=ci-bucket
-          S3_REGION=eu-north-1
-          S3_ACCESS_KEY_ID=ci-access-key
-          S3_SECRET_ACCESS_KEY=ci-secret-key
-          ENVFILE
+          printf '%s\n' 'POSTGRES_PASSWORD=ci-postgres-password' > .env
+          printf '%s\n' \
+            'JWT_SECRET=ci-jwt-secret-that-is-long-enough-for-validation-000000' \
+            'CORS_ORIGINS=https://ci.example' \
+            'FRONTEND_URL=https://ci.example' \
+            'STRIPE_SECRET_KEY=sk_test_ci' \
+            'STRIPE_WEBHOOK_SECRET=whsec_ci' \
+            'SMTP_HOST=smtp.example' \
+            'S3_BUCKET=ci-bucket' \
+            'S3_REGION=eu-north-1' \
+            'S3_ACCESS_KEY_ID=ci-access-key' \
+            'S3_SECRET_ACCESS_KEY=ci-secret-key' > .env.production
 
       # Only the data services and the API. nginx/certbot want real
       # certificates and a real domain, which CI has neither of - pretending
