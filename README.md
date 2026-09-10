@@ -37,6 +37,47 @@ proper local dev setup you can open in VS Code, extend, and eventually
 deploy. The artifact version still exists as a backup for quick, no-setup
 demos - this project is for real development.
 
+## Thirty-eighth round: a real end-to-end test
+
+`npm run e2e` - 39 assertions covering signup, email verification, session
+refresh, listing, search, geosearch, image upload, messaging, Connect
+onboarding, checkout, webhook, fulfilment, receipt, review, trust, audit
+trail, webhook replay, data export and account deletion.
+
+**Everything is real except Stripe's servers.** A real Express process over
+real HTTP, a real PostgreSQL database, the real Stripe SDK, and webhook
+signatures generated with Stripe's own HMAC scheme so the server's actual
+signature verification runs. Only the far end of the Stripe connection is a
+local fake.
+
+That distinction is the point. The Jest suite mocks the `stripe` module,
+which means the SDK never executes - request shapes, form encoding,
+idempotency headers, response parsing and error handling all go untested.
+Here the SDK does its real work against a stub that speaks the wire
+protocol. `stripeClient` gained an optional `STRIPE_API_HOST`, which is how
+`stripe-mock` is normally used, and which **throws in production** rather
+than letting live payment traffic be pointed at a non-Stripe host.
+
+**Verified the test can fail.** A test that has never failed is a claim,
+not evidence. My first attempt at sabotage was ineffective - I changed a
+return value that ran *after* the status update, so the order still settled
+and the suite still passed. Changing the actual settlement transition
+produced 10 cascading failures, which is the behaviour a real regression
+would produce.
+
+Notable assertions beyond the happy path: a forged webhook signature is
+rejected, another user cannot finalize someone else's upload, checkout is
+blocked before Connect onboarding, a replayed webhook does not change a
+completed order, and a seller **with a sold listing** can delete their
+account - the case that was broken three rounds ago and that the unit
+tests had missed entirely.
+
+Now part of `npm run verify`.
+
+**Still not covered:** a wrong API version, bad key permissions, or a
+mismatched webhook secret at real Stripe. No local fake can catch those -
+`npm run journey` against `sk_test_` keys remains the only thing that will.
+
 ## Thirty-seventh round: metrics off the public application
 
 `/metrics` was a route on the public app, protected only by an nginx

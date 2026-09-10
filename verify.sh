@@ -42,6 +42,16 @@ step "Frontend lint"
 step "Frontend build"
 (cd frontend && npx vite build) || fail "frontend build"
 
+step "End-to-end test (real server, real database, real Stripe SDK)"
+# Broader than the smoke test below: signup through payment, fulfilment,
+# review, and account deletion, with the actual Stripe SDK talking to a
+# local fake. Catches wiring the unit tests cannot, because they mock the
+# stripe module and so never run the SDK at all.
+createdb_out=$(psql "${E2E_ADMIN_URL:-postgres://postgres:postgres@localhost:5432/postgres}" \
+  -c "DROP DATABASE IF EXISTS parentos_e2e;" -c "CREATE DATABASE parentos_e2e;" 2>&1) \
+  || fail "could not create the e2e database: $createdb_out"
+(cd "$ROOT/backend" && npm run --silent e2e) || fail "end-to-end test"
+
 step "Smoke test against a real running server"
 # Checked before starting the server so a missing .env produces the actual
 # instruction rather than a connection-refused and an opaque 000.

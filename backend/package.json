@@ -13,7 +13,8 @@
     "reconcile": "node scripts/reconcile.js",
     "verify": "bash ../verify.sh",
     "journey": "node scripts/journey.js",
-    "smoke:stripe": "node scripts/smoke-stripe.js"
+    "smoke:stripe": "node scripts/smoke-stripe.js",
+    "e2e": "node scripts/e2e.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.637.0",
