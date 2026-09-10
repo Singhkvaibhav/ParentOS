@@ -598,6 +598,40 @@ async function history(userId, transactionIdInput) {
   return orderHistory(transaction.id);
 }
 
+// Purpose-built for the post-payment wait.
+//
+// Stripe telling the browser "succeeded" and this backend recording the
+// order as paid are two different facts, separated by webhook delivery.
+// The client needs to distinguish them, so this reports the authoritative
+// server-side status rather than the client inferring it from Stripe.
+//
+// Kept deliberately small: it is polled, so it should not carry the full
+// order payload, and it must not become a way to enumerate other people's
+// orders - hence the participant check.
+async function orderStatus(userId, transactionIdInput) {
+  const transactionId = parseId(transactionIdInput, "transactionId", TransactionError);
+
+  const { rows } = await query(
+    `SELECT id, status, buyer_id, seller_id, paid_at, listing_id
+     FROM transactions WHERE id = $1`,
+    [transactionId]
+  );
+  const transaction = rows[0];
+  if (!transaction) throw new TransactionError(404, "Order not found.");
+  if (transaction.buyer_id !== userId && transaction.seller_id !== userId) {
+    throw new TransactionError(403, "Not your order.");
+  }
+
+  return {
+    id: transaction.id,
+    status: transaction.status,
+    // True once the webhook has been processed and the order genuinely
+    // transitioned - which is the question the client is actually asking.
+    settled: transaction.status !== STATUS.PENDING,
+    paidAt: transaction.paid_at,
+  };
+}
+
 async function mine(userId) {
   const { rows } = await query(
     `SELECT transactions.*, listings.title AS listing_title
@@ -614,4 +648,4 @@ async function mine(userId) {
   }));
 }
 
-module.exports = { TransactionError, checkout, handleWebhook, releaseExpiredReservations, confirmReceipt, markFulfilled, raiseDispute, resolveDispute, history, mine, DELIVERY_FEE_CENTS, COMMISSION_PERCENT, RESERVATION_TTL_MINUTES };
+module.exports = { TransactionError, checkout, handleWebhook, releaseExpiredReservations, confirmReceipt, markFulfilled, raiseDispute, resolveDispute, orderStatus, history, mine, DELIVERY_FEE_CENTS, COMMISSION_PERCENT, RESERVATION_TTL_MINUTES };

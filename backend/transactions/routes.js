@@ -16,6 +16,9 @@ router.post("/:id/fulfil", validateIdParams("id"), requireAuth, controller.markF
 router.post("/:id/resolve-dispute", validateIdParams("id"), requireAuth, controller.resolveDispute);
 router.post("/:id/dispute", validateIdParams("id"), requireAuth, controller.raiseDispute);
 // Audit trail for one order - support and dispute evidence.
+// Polled by the client after payment, to find out whether the WEBHOOK has
+// settled the order - not merely whether Stripe accepted the card.
+router.get("/:id/status", validateIdParams("id"), requireAuth, controller.orderStatus);
 router.get("/:id/history", validateIdParams("id"), requireAuth, controller.history);
 // Note: the webhook route itself is mounted separately in server.js, before
 // the JSON body parser, because Stripe's signature check needs the raw body.

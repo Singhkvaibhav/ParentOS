@@ -77,8 +77,16 @@ async function resolveDispute(req, res) {
   }
 }
 
+async function orderStatus(req, res) {
+  try {
+    res.json(await transactionsService.orderStatus(req.user.id, req.params.id));
+  } catch (e) {
+    handleServiceError(res, e);
+  }
+}
+
 async function mine(req, res) {
   res.json({ transactions: await transactionsService.mine(req.user.id) });
 }
 
-module.exports = { checkout, webhook, confirmReceipt, markFulfilled, raiseDispute, resolveDispute, history, mine };
+module.exports = { checkout, webhook, confirmReceipt, markFulfilled, raiseDispute, resolveDispute, orderStatus, history, mine };

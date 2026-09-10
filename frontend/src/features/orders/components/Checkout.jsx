@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { X, Truck, Package, CheckCircle2, MapPin } from "lucide-react";
 import { loadStripe } from "@stripe/stripe-js";
 import { Elements, PaymentElement, useStripe, useElements } from "@stripe/react-stripe-js";
@@ -44,7 +44,34 @@ export default function Checkout({ listing, onClose, showToast }) {
   const [stripePromise, setStripePromise] = useState(null);
   const [error, setError] = useState(null);
   const [starting, setStarting] = useState(false);
-  const [confirmed, setConfirmed] = useState(null); // the completed order
+  const [confirmed, setConfirmed] = useState(null); // payment accepted by Stripe
+  // Settlement is a SEPARATE fact from payment: Stripe accepting the card
+  // tells us nothing about whether the webhook has reached this backend and
+  // moved the order out of 'pending'. Claiming "order confirmed" on the
+  // strength of the client response would be asserting something we
+  // haven't checked.
+  const [settlement, setSettlement] = useState("waiting"); // waiting | settled | slow
+
+  // Polls until the backend reports the order settled. Webhooks usually
+  // arrive in seconds, but they can be delayed or retried, so this gives up
+  // after a bounded wait and says so honestly rather than either spinning
+  // forever or claiming a confirmation it never received.
+  const pollForSettlement = useCallback(async (transactionId) => {
+    const deadline = Date.now() + 30000;
+    while (Date.now() < deadline) {
+      try {
+        const status = await transactionsService.status(transactionId);
+        if (status.settled) { setSettlement("settled"); return; }
+      } catch {
+        // A failed poll is not evidence the order failed - keep trying
+        // until the deadline.
+      }
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+    // The money is taken either way; what is unconfirmed is the order
+    // transition. Saying so is more useful than a spinner.
+    setSettlement("slow");
+  }, []);
 
   async function startCheckout() {
     setStarting(true);
@@ -73,7 +100,9 @@ export default function Checkout({ listing, onClose, showToast }) {
       <div className="modal-sheet modal-sheet-small" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <h2 className="uk-display modal-title">
-            {confirmed ? "Order confirmed" : session ? "Payment" : "Buy this item"}
+            {confirmed
+              ? (settlement === "settled" ? "Order confirmed" : "Payment received")
+              : session ? "Payment" : "Buy this item"}
           </h2>
           <button onClick={onClose} aria-label="Close"><X size={20} /></button>
         </div>
@@ -81,8 +110,21 @@ export default function Checkout({ listing, onClose, showToast }) {
         {confirmed ? (
           <div className="form-stack">
             <p className="checkout-confirmed">
-              <CheckCircle2 size={18} /> Payment received
+              <CheckCircle2 size={18} />{" "}
+              {settlement === "settled" ? "Order confirmed" : "Payment received"}
             </p>
+
+            {settlement === "waiting" && (
+              <p className="small">Confirming your order with our system...</p>
+            )}
+            {settlement === "slow" && (
+              <p className="small">
+                Your payment went through. The order is taking a little longer than
+                usual to confirm on our side - it will appear under Purchases &amp; sales
+                shortly. Nothing further is needed from you, and you have not been
+                charged twice.
+              </p>
+            )}
 
             <div className="profile-card">
               <p><strong>{listing.title}</strong></p>
@@ -150,7 +192,12 @@ export default function Checkout({ listing, onClose, showToast }) {
               <PaymentElement />
               <PayButton
                 amountLabel={formatEuro(order.total_amount_cents)}
-                onSuccess={() => { setConfirmed(order); showToast("Payment successful!"); }}
+                onSuccess={() => {
+                  setConfirmed(order);
+                  // Deliberately "Payment received", not "Order confirmed".
+                  showToast("Payment received.");
+                  pollForSettlement(order.id);
+                }}
                 onError={(msg) => showToast(msg)}
               />
             </Elements>

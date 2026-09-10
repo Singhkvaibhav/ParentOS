@@ -457,3 +457,79 @@ describe("checkout is atomic", () => {
     expect(rows).toHaveLength(0);
   });
 });
+
+// Stripe telling the browser "succeeded" and this backend recording the
+// order as paid are two different facts, separated by webhook delivery.
+// The client previously inferred the second from the first, so a delayed
+// or failed webhook meant the UI claimed an order confirmation the server
+// had never made.
+describe("order status endpoint", () => {
+  test("reports unsettled before the webhook arrives", async () => {
+    const seller = await createVerifiedUser(app, { email: "statusseller@example.com" });
+    const buyer = await createVerifiedUser(app, { email: "statusbuyer@example.com" });
+    const listing = await createListing(seller.agent);
+
+    const checkout = await buyer.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+
+    const res = await buyer.agent.get(`/api/transactions/${checkout.body.transaction.id}/status`);
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("pending");
+    // The flag the client actually polls on.
+    expect(res.body.settled).toBe(false);
+    expect(res.body.paidAt).toBeNull();
+  });
+
+  test("reports settled once the webhook has been processed", async () => {
+    const seller = await createVerifiedUser(app, { email: "statusseller2@example.com" });
+    const buyer = await createVerifiedUser(app, { email: "statusbuyer2@example.com" });
+    const listing = await createListing(seller.agent);
+
+    const checkout = await buyer.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+    await sendWebhook("payment_intent.succeeded", { id: checkout.body.transaction.stripe_payment_intent_id });
+
+    const res = await buyer.agent.get(`/api/transactions/${checkout.body.transaction.id}/status`);
+    expect(res.body.status).toBe("paid");
+    expect(res.body.settled).toBe(true);
+    expect(res.body.paidAt).not.toBeNull();
+  });
+
+  test("the seller can also read it", async () => {
+    const seller = await createVerifiedUser(app, { email: "statusseller3@example.com" });
+    const buyer = await createVerifiedUser(app, { email: "statusbuyer3@example.com" });
+    const listing = await createListing(seller.agent);
+    const checkout = await buyer.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+
+    expect((await seller.agent.get(`/api/transactions/${checkout.body.transaction.id}/status`)).status).toBe(200);
+  });
+
+  // It's polled, so it must not become a way to enumerate other people's
+  // orders by walking ids.
+  test("an unrelated user cannot read it", async () => {
+    const seller = await createVerifiedUser(app, { email: "statusseller4@example.com" });
+    const buyer = await createVerifiedUser(app, { email: "statusbuyer4@example.com" });
+    const stranger = await createVerifiedUser(app, { email: "statusstranger@example.com" });
+    const listing = await createListing(seller.agent);
+    const checkout = await buyer.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+
+    expect((await stranger.agent.get(`/api/transactions/${checkout.body.transaction.id}/status`)).status).toBe(403);
+  });
+
+  test("requires authentication", async () => {
+    expect((await request(app).get("/api/transactions/1/status")).status).toBe(401);
+  });
+
+  // A refunded or cancelled order is settled too - the client is asking
+  // "has the server finished deciding?", not "did it succeed?".
+  test("a resolved-but-not-paid order also reports settled", async () => {
+    const seller = await createVerifiedUser(app, { email: "statusseller5@example.com" });
+    const buyer = await createVerifiedUser(app, { email: "statusbuyer5@example.com" });
+    const listing = await createListing(seller.agent);
+    const checkout = await buyer.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+
+    await query("UPDATE transactions SET status = 'cancelled' WHERE id = $1", [checkout.body.transaction.id]);
+
+    const res = await buyer.agent.get(`/api/transactions/${checkout.body.transaction.id}/status`);
+    expect(res.body.settled).toBe(true);
+    expect(res.body.status).toBe("cancelled");
+  });
+});

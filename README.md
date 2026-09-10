@@ -77,6 +77,39 @@ exactly the behaviour that is now wrong. Replaced rather than adapted.
 
 339 → 345 tests.
 
+## Thirty-seventh round: the UI claimed a confirmation the server never made
+
+A review pointed out that `Checkout.jsx` treated
+`paymentIntent.status === "succeeded"` from the Stripe client as the order
+being confirmed. But the backend's authoritative state comes from the
+webhook, so the two can diverge: Stripe accepts the card, the browser says
+"Order confirmed", the webhook is delayed or fails, and the backend still
+has the order as `pending`.
+
+The payment succeeding and the *order* transitioning are different facts.
+The UI was reporting the second on evidence for the first.
+
+**Split them.** Stripe accepting the card now shows "Payment received".
+The client then polls a new `GET /api/transactions/:id/status` until the
+backend reports the order settled, and only then says "Order confirmed".
+
+The endpoint is purpose-built for polling: small (id, status, `settled`,
+`paidAt`) rather than the full order, and restricted to the buyer and
+seller - it's polled, so it must not become a way to enumerate other
+people's orders by walking ids. `settled` means "the server has finished
+deciding", so a cancelled or refunded order counts too; the client is
+asking whether to stop waiting, not whether it succeeded.
+
+**The timeout case is where the honesty matters.** Polling gives up after
+30 seconds and says the payment went through but the order is still
+confirming, rather than spinning indefinitely or asserting a confirmation
+that never arrived. The money is taken either way - what is unconfirmed is
+the order transition, and saying exactly that is more useful than a
+spinner. A failed poll is explicitly not treated as evidence the order
+failed.
+
+339 → 351 tests.
+
 ## Thirty-sixth round: monitoring the distributed checkout window
 
 A review noted that checkout spans Postgres, then Stripe, then Postgres
