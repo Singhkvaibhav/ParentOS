@@ -388,7 +388,9 @@ describe("proxy trust", () => {
   }
 
   test("without trust proxy the client IP is lost", async () => {
-    expect(await ipBehind(null, "203.0.113.7")).toBe("127.0.0.1");
+    expect(["127.0.0.1", "::ffff:127.0.0.1"]).toContain(
+      await ipBehind(null, "203.0.113.7")
+    );
   });
 
   test("trusting one hop recovers the real client IP", async () => {
