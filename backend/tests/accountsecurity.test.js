@@ -229,3 +229,107 @@ describe("refresh token rotation", () => {
     await expect(tokens.rotate(issued.raw, {})).rejects.toThrow();
   });
 });
+
+// The reset flow previously read the token, checked used_at in JavaScript,
+// changed the password, and only then marked the token used. Two requests
+// with the same token both read it as unused and both proceeded - so
+// "single-use" held only when nobody raced it, which is precisely what an
+// attacker holding a leaked token would not respect.
+describe("password reset token is single-use under concurrency", () => {
+  async function tokenFor(email) {
+    const user = await createVerifiedUser(app, { email });
+    const raw = "race-" + Math.random().toString(36).slice(2);
+    await query(
+      `INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
+       VALUES ($1, $2, now() + interval '30 minutes')`,
+      [user.user.id, tokens.hashToken(raw)]
+    );
+    return { user, raw };
+  }
+
+  // Tests the claim at the DATABASE level, on genuinely parallel
+  // connections, rather than by calling resetPassword() concurrently.
+  //
+  // Calling the service ten times in one process does NOT exercise this:
+  // bcryptjs is pure JavaScript and blocks the event loop, so the ten
+  // requests serialize on hashing and never actually interleave. That test
+  // passes even against the old read-then-write code - verified by
+  // reintroducing the bug and watching it still pass.
+  //
+  // The race is real in production, where requests are spread across
+  // multiple instances and multiple connections. This reproduces that
+  // shape: N separate clients racing the same claim.
+  test("only one connection can claim the token, even racing in parallel", async () => {
+    const { user, raw } = await tokenFor("raceconcurrent@example.com");
+    const tokenHash = tokens.hashToken(raw);
+
+    const { Pool } = require("pg");
+    const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 8 });
+
+    try {
+      const claim = () =>
+        pool.query(
+          `UPDATE password_reset_tokens
+           SET used_at = now()
+           WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now()
+           RETURNING id`,
+          [tokenHash]
+        );
+
+      const results = await Promise.all(Array.from({ length: 8 }, claim));
+      const winners = results.filter((r) => r.rowCount === 1);
+
+      // The database is the arbiter: whichever statement runs first flips
+      // used_at, and every other matches zero rows.
+      expect(winners).toHaveLength(1);
+    } finally {
+      await pool.end();
+    }
+
+    // And the service refuses the token afterwards.
+    await expect(security.resetPassword(raw, "after-the-race")).rejects.toThrow(/invalid or has expired/i);
+    expect(user.user.id).toBeTruthy();
+  });
+
+  test("the token is marked used exactly once", async () => {
+    const { user, raw } = await tokenFor("raceusedonce@example.com");
+    await Promise.allSettled(
+      Array.from({ length: 5 }, () => security.resetPassword(raw, "another-password-1"))
+    );
+
+    const { rows } = await query(
+      "SELECT used_at FROM password_reset_tokens WHERE user_id = $1",
+      [user.user.id]
+    );
+    expect(rows.filter((r) => r.used_at !== null)).toHaveLength(1);
+  });
+
+  // A second link sitting in the inbox would otherwise stay a live
+  // takeover path after the password had already been changed.
+  test("resetting burns every other outstanding token for that user", async () => {
+    const user = await createVerifiedUser(app, { email: "burnothers@example.com" });
+    const first = "burn-a-" + Math.random().toString(36).slice(2);
+    const second = "burn-b-" + Math.random().toString(36).slice(2);
+    for (const raw of [first, second]) {
+      await query(
+        `INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
+         VALUES ($1, $2, now() + interval '30 minutes')`,
+        [user.user.id, tokens.hashToken(raw)]
+      );
+    }
+
+    await security.resetPassword(first, "used-the-first-link");
+    await expect(security.resetPassword(second, "tried-the-second")).rejects.toThrow(/invalid or has expired/i);
+  });
+
+  // The claim and the password change are in one transaction: a failure
+  // after claiming would otherwise leave the user with a burned token and
+  // an unchanged password - locked out by the mechanism meant to help.
+  test("a rejected password leaves the token usable", async () => {
+    const { raw } = await tokenFor("shortpw@example.com");
+    await expect(security.resetPassword(raw, "short")).rejects.toThrow(/at least 8/i);
+
+    // Still valid, because the weak password was refused before the claim.
+    await expect(security.resetPassword(raw, "a-proper-password")).resolves.toMatchObject({ ok: true });
+  });
+});

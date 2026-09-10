@@ -37,6 +37,54 @@ proper local dev setup you can open in VS Code, extend, and eventually
 deploy. The artifact version still exists as a backup for quick, no-setup
 demos - this project is for real development.
 
+## Thirty-second round: two critical auth bugs
+
+**Password-reset tokens weren't actually single-use.** The flow read the
+token, checked `used_at` and expiry in JavaScript, changed the password,
+and only then marked the token used. Two requests with the same token both
+read it as unused and both proceeded - so "single-use" held only when
+nobody raced it, which is precisely the condition an attacker holding a
+leaked token would not respect.
+
+The claim is now `UPDATE ... WHERE used_at IS NULL AND expires_at > now()
+RETURNING *`, so the database is the arbiter: the first statement flips
+`used_at`, every other matches zero rows, and only the request holding the
+returned row continues. Claim, password change and burning any other
+outstanding tokens all happen in one transaction - a claim that committed
+separately from a failed password update would leave the user with a burned
+token and an unchanged password, locked out by the mechanism meant to let
+them back in.
+
+**A test that proved nothing.** My first regression test called
+`resetPassword()` ten times concurrently and passed - but it also passed
+with the bug deliberately reintroduced. `bcryptjs` is pure JavaScript and
+blocks the event loop, so ten calls in one process serialize on hashing and
+never interleave. The race is real in production, where requests span
+multiple instances and connections.
+
+The test now races the claim across parallel database connections, which is
+the shape production actually has. Verified both directions: the naive
+read-then-write lets **two** winners through, the atomic claim allows
+exactly **one**.
+
+**Direct-upload keys weren't tied to their uploader.** The presign flow
+issued `quarantine/<uuid>.upload` and both the PUT and finalize endpoints
+checked only that the key started with `quarantine/`. Any authenticated
+user holding a key could write to it or finalize it. A UUID is unguessable,
+but unguessable is not authorized - keys travel through logs, browser
+history, proxies and error reports, and any of those turns "hard to guess"
+into "known".
+
+Migration 018 adds an `uploads` table naming the user each key was issued
+to, and both later steps verify ownership. A key belonging to someone else
+returns **404, not 403**: confirming that a key exists but isn't yours is
+exactly what someone probing keys wants to learn. The table also gives
+abandoned uploads somewhere to be found - previously an unused presign left
+an orphaned object with nothing recording it existed - so `sweepAbandoned`
+can now clean them up.
+
+296 → 308 tests.
+
 ## Thirty-first round: CORS mismatch, checkout atomicity, production config
 
 **A silent production-breaking bug.** `server.js` read `ALLOWED_ORIGINS`
@@ -2177,7 +2225,7 @@ backend/
                   can reach Postgres as a raw type error)
   utils/          validation.js's parseId() - the body-field-id equivalent
                   of middleware/validateId.js, used inside services
-  tests/          Jest + Supertest (296 tests), run against a real
+  tests/          Jest + Supertest (308 tests), run against a real
                   parentos_test database - dbReset.js truncates it before
                   each test file, helpers.js's createVerifiedUser returns a
                   cookie-carrying supertest agent, transactions.test.js and

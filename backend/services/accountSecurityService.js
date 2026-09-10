@@ -1,6 +1,6 @@
 const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
-const { query } = require("../db");
+const { query, withTransaction } = require("../db");
 const { sendNotificationEmail } = require("../email");
 const { revokeAllForUser, hashToken } = require("./tokenService");
 const logger = require("../logger");
@@ -67,41 +67,74 @@ async function resetPassword(rawToken, newPassword) {
     throw new AccountSecurityError(400, "Password must be at least 8 characters.");
   }
 
-  const { rows } = await query(
-    "SELECT * FROM password_reset_tokens WHERE token_hash = $1",
-    [hashToken(String(rawToken || ""))]
-  );
-  const token = rows[0];
+  const tokenHash = hashToken(String(rawToken || ""));
+  let userId;
 
-  // One message for every failure mode - expired, used, and nonexistent are
-  // indistinguishable to the caller, so a guessed token reveals nothing.
-  if (!token || token.used_at || new Date(token.expires_at) < new Date()) {
-    throw new AccountSecurityError(400, "That reset link is invalid or has expired.");
-  }
+  await withTransaction(async (tx) => {
+    // Claim the token by UPDATE ... RETURNING, not SELECT-then-check.
+    //
+    // The previous version read the token, checked used_at and expiry in
+    // JavaScript, changed the password, and only then marked the token
+    // used. Two concurrent requests with the same token both read it as
+    // unused and both proceeded - so a "single-use" token was only
+    // single-use when nobody raced it, which is exactly the condition an
+    // attacker holding a leaked token would not respect.
+    //
+    // Moving the conditions into the WHERE clause makes the database the
+    // arbiter: whichever statement runs first flips used_at, the second
+    // matches zero rows, and only the request holding the returned row
+    // continues.
+    const { rows } = await tx(
+      `UPDATE password_reset_tokens
+       SET used_at = now()
+       WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now()
+       RETURNING *`,
+      [tokenHash]
+    );
+    const token = rows[0];
 
-  const passwordHash = await bcrypt.hash(String(newPassword), 10);
+    // One message for every failure mode - expired, already used, and
+    // nonexistent are indistinguishable to the caller, so a guessed token
+    // reveals nothing about whether it was ever real.
+    if (!token) throw new AccountSecurityError(400, "That reset link is invalid or has expired.");
 
-  await query("UPDATE password_reset_tokens SET used_at = now() WHERE id = $1", [token.id]);
-  await query(
-    // Bumping session_version invalidates existing access tokens, and
-    // clearing the lockout lets a user who reset BECAUSE they were locked
-    // out actually get back in.
-    `UPDATE users
-     SET password_hash = $1, session_version = session_version + 1,
-         failed_login_count = 0, locked_until = NULL
-     WHERE id = $2`,
-    [passwordHash, token.user_id]
-  );
+    userId = token.user_id;
+    const passwordHash = await bcrypt.hash(String(newPassword), 10);
 
-  // Resetting a password must end every other session. If the reset was
-  // prompted by a compromise, leaving the attacker's session alive would
-  // defeat the entire exercise.
-  await revokeAllForUser(token.user_id, "password_reset");
+    // In the SAME transaction as the claim. If the password update failed
+    // after the claim committed separately, the user would be left with a
+    // burned token and an unchanged password - locked out by the very
+    // mechanism meant to let them back in.
+    await tx(
+      // Bumping session_version invalidates existing access tokens, and
+      // clearing the lockout lets a user who reset BECAUSE they were
+      // locked out actually get back in.
+      `UPDATE users
+       SET password_hash = $1, session_version = session_version + 1,
+           failed_login_count = 0, locked_until = NULL
+       WHERE id = $2`,
+      [passwordHash, token.user_id]
+    );
 
-  const { rows: userRows } = await query("SELECT email, name FROM users WHERE id = $1", [token.user_id]);
+    // Any OTHER outstanding reset token is burned too. Otherwise a second
+    // link sitting in the inbox stays a live takeover path after the
+    // password has already been changed.
+    await tx(
+      "UPDATE password_reset_tokens SET used_at = now() WHERE user_id = $1 AND used_at IS NULL",
+      [token.user_id]
+    );
+  });
+
+  // Session revocation runs after the transaction commits. Refresh tokens
+  // are a separate concern from the password change, and a failure here
+  // must not roll back a password the user has already been told to expect
+  // - the same reasoning as the refresh-token reuse fix.
+  await revokeAllForUser(userId, "password_reset");
+
+  const { rows: userRows } = await query("SELECT email, name FROM users WHERE id = $1", [userId]);
   if (userRows[0]) {
-    // Notifying after the fact is what lets a victim notice a takeover they
-    // didn't initiate.
+    // Notifying after the fact is what lets a victim notice a takeover
+    // they didn't initiate.
     await sendNotificationEmail(
       userRows[0].email,
       "Your Uusiksi password was changed",
@@ -109,7 +142,7 @@ async function resetPassword(rawToken, newPassword) {
     );
   }
 
-  logger.warn("password_reset_completed", { userId: token.user_id });
+  logger.warn("password_reset_completed", { userId });
   return { ok: true };
 }
 

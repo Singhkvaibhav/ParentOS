@@ -54,50 +54,71 @@ router.post("/", express.json({ limit: "6mb" }), requireAuth, async (req, res) =
 // --- Direct (presigned) upload flow --------------------------------------
 //
 // Three steps: ask for a URL, PUT the bytes straight to storage, then tell
-// the backend to process what landed. The middle step never touches this
-// server when S3 is configured.
+// the backend to process what landed. Every step verifies the key belongs
+// to the caller - the key itself is not a credential.
 
-// Step 1: hand the browser a short-lived upload URL.
+// Step 1: issue a short-lived upload URL, recorded against this user.
 router.post("/presign", express.json(), requireAuth, async (req, res) => {
-  const { createPresignedUpload } = require("../storage");
-  const contentType = String(req.body?.contentType || "image/jpeg");
-  if (!/^image\//.test(contentType)) {
-    return res.status(400).json({ error: "Only images can be uploaded." });
+  const { createUpload, UploadError } = require("../services/uploadService");
+  try {
+    res.json(await createUpload(req.user.id, { contentType: req.body?.contentType }));
+  } catch (e) {
+    if (e instanceof UploadError) return res.status(e.status).json({ error: e.message });
+    throw e;
   }
-  res.json(await createPresignedUpload({ contentType }));
 });
 
 // Step 2 (local driver only): stands in for the object store so the
-// browser flow is identical in development. With S3 configured the
-// browser PUTs to Amazon/R2 and never reaches this route.
+// browser flow is identical in development. With S3 configured the browser
+// PUTs to Amazon/R2 and never reaches this route.
 router.put("/direct/:key", requireAuth, express.raw({ type: "*/*", limit: "12mb" }), async (req, res) => {
-  const { writeObject, QUARANTINE_PREFIX } = require("../storage");
-  const key = decodeURIComponent(req.params.key);
-  // The key came from us, but it arrives via the client - so re-check it
-  // targets quarantine rather than trusting it to overwrite a public object.
-  if (!key.startsWith(QUARANTINE_PREFIX)) {
-    return res.status(400).json({ error: "Invalid upload target." });
+  const { writeObject } = require("../storage");
+  const { requireOwnedUpload, markUploaded, UploadError } = require("../services/uploadService");
+
+  try {
+    // Ownership, not just key shape. Previously any authenticated user
+    // holding a quarantine key could write to it.
+    const upload = await requireOwnedUpload(req.user.id, decodeURIComponent(req.params.key), {
+      allowStatuses: ["pending"],
+    });
+    await writeObject(upload.storage_key, req.body);
+    await markUploaded(upload.id);
+    res.json({ ok: true });
+  } catch (e) {
+    if (e instanceof UploadError) return res.status(e.status).json({ error: e.message });
+    throw e;
   }
-  await writeObject(key, req.body);
-  res.json({ ok: true });
 });
 
 // Step 3: validate, strip EXIF, re-encode, and promote out of quarantine.
 // Nothing uploaded this way is publicly reachable until this succeeds.
 router.post("/finalize", requireAuth, express.json(), async (req, res) => {
-  const { processUpload } = require("../services/imageProcessingService");
-  const { ImageProcessingError } = require("../services/imageProcessingService");
-  const { QUARANTINE_PREFIX } = require("../storage");
-  const key = String(req.body?.key || "");
-  if (!key.startsWith(QUARANTINE_PREFIX)) {
-    return res.status(400).json({ error: "Invalid upload key." });
+  const { processUpload, ImageProcessingError } = require("../services/imageProcessingService");
+  const {
+    requireOwnedUpload, markProcessed, markFailed, UploadError,
+  } = require("../services/uploadService");
+
+  let upload;
+  try {
+    upload = await requireOwnedUpload(req.user.id, req.body?.key, {
+      allowStatuses: ["pending", "uploaded"],
+    });
+  } catch (e) {
+    if (e instanceof UploadError) return res.status(e.status).json({ error: e.message });
+    throw e;
   }
 
   try {
-    const result = await processUpload(key, { requestId: req.id });
+    const result = await processUpload(upload.storage_key, { requestId: req.id });
+    if (result.key) await markProcessed(upload.id, { publicKey: result.key, publicUrl: result.url });
     res.json(result);
   } catch (e) {
-    if (e instanceof ImageProcessingError) return res.status(e.status).json({ error: e.message });
+    if (e instanceof ImageProcessingError) {
+      // Recording the failure means a rejected upload can't be retried
+      // indefinitely against the same key, and leaves a trace of why.
+      await markFailed(upload.id, e.message);
+      return res.status(e.status).json({ error: e.message });
+    }
     throw e;
   }
 });
