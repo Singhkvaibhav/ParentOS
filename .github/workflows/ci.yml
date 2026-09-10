@@ -122,6 +122,20 @@ jobs:
           echo "$output" | grep -qi "JWT_SECRET\|DATABASE_URL\|CORS_ORIGINS" \
             || (echo "::error::API image did not report missing configuration on startup" && exit 1)
 
+      - name: Create CI production environment
+        run: |
+          printf '%s\n' \
+            'JWT_SECRET=ci-jwt-secret-that-is-long-enough-for-validation-000000' \
+            'CORS_ORIGINS=https://ci.example' \
+            'FRONTEND_URL=https://ci.example' \
+            'STRIPE_SECRET_KEY=sk_test_ci' \
+            'STRIPE_WEBHOOK_SECRET=whsec_ci' \
+            'SMTP_HOST=smtp.example' \
+            'S3_BUCKET=ci-bucket' \
+            'S3_REGION=eu-north-1' \
+            'S3_ACCESS_KEY_ID=ci-access-key' \
+            'S3_SECRET_ACCESS_KEY=ci-secret-key' > .env.production
+
       - name: Compose file is valid
         run: docker compose -f docker-compose.yml config --quiet
 
