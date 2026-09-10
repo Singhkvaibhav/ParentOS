@@ -7,7 +7,7 @@ const logger = require("../logger");
 const { notify } = require("./notificationsService");
 const { transitionOrder, recordOrderCreated, orderHistory } = require("./orderStateMachine");
 const { refreshTransactionCounters } = require("./trustService");
-const { STATUS, IN_FLIGHT_FOR_MODERATION, sqlList } = require("../transactionStatus");
+const { STATUS } = require("../transactionStatus");
 
 // Marketplace economics live in config.js - see the note there.
 const { deliveryFeeCents: DELIVERY_FEE_CENTS, commissionPercent: COMMISSION_PERCENT, reservationTtlMinutes: RESERVATION_TTL_MINUTES } = MARKETPLACE;
@@ -265,7 +265,20 @@ async function handleWebhook(rawBody, signature) {
     if (outcome.action === "needs-refund") {
       logger.warn("late_payment_refunding", { paymentIntentId: paymentIntent.id, transactionId: outcome.transactionId });
       try {
-        await stripe.refunds.create({ payment_intent: paymentIntent.id });
+        // Stable idempotency key, derived from the transaction rather than
+        // generated per attempt.
+        //
+        // Without one this was a genuine double-refund path: if
+        // transitionOrder below fails, the catch swallows the error and the
+        // order keeps its old status - so when Stripe retries the same
+        // event (delivery is at-least-once, so retries are expected rather
+        // than exceptional) this branch runs again and refunds the buyer a
+        // second time. Stripe deduplicates on the key, returning the
+        // original refund instead of creating another.
+        await stripe.refunds.create(
+          { payment_intent: paymentIntent.id },
+          { idempotencyKey: `late-payment-refund-${outcome.transactionId}` }
+        );
         await transitionOrder({
           transactionId: outcome.transactionId,
           to: STATUS.REFUNDED,
@@ -551,70 +564,6 @@ async function resolveDispute(adminId, transactionIdInput, { outcome, note }) {
   return updated[0];
 }
 
-async function refundForModeration(listingId, reason) {
-  const { rows } = await query(
-    `SELECT * FROM transactions WHERE listing_id = $1 AND status IN (${sqlList(IN_FLIGHT_FOR_MODERATION)})`,
-    [listingId]
-  );
-  if (rows.length === 0) return { affected: 0 };
-
-  let stripe = null;
-  try {
-    stripe = getStripe();
-  } catch (e) {
-    // Without Stripe we can't move money, and marking an order refunded
-    // when no refund happened would be worse than failing loudly.
-    logger.error("moderation_refund_impossible_stripe_unconfigured", { listingId, count: rows.length, err: e });
-    throw new TransactionError(503, "Can't process refunds right now - Stripe isn't configured.");
-  }
-
-  let affected = 0;
-  for (const transaction of rows) {
-    try {
-      if (transaction.status === "pending") {
-        if (transaction.stripe_payment_intent_id) {
-          await stripe.paymentIntents.cancel(transaction.stripe_payment_intent_id);
-        }
-        await query("UPDATE transactions SET cancellation_reason = $1 WHERE id = $2",
-          [`Listing removed by moderator: ${reason || "policy"}`, transaction.id]);
-        await transitionOrder({
-          transactionId: transaction.id,
-          to: STATUS.CANCELLED,
-          actorType: "admin",
-          reason: `Listing removed by moderator: ${reason || "policy"}`,
-          metadata: { listingId, moderationAction: "takedown" },
-          expectedFrom: STATUS.PENDING,
-        });
-      } else {
-        await stripe.refunds.create({ payment_intent: transaction.stripe_payment_intent_id });
-        await query("UPDATE transactions SET cancellation_reason = $1 WHERE id = $2",
-          [`Listing removed by moderator: ${reason || "policy"}`, transaction.id]);
-        await transitionOrder({
-          transactionId: transaction.id,
-          to: STATUS.REFUNDED,
-          actorType: "admin",
-          reason: `Listing removed by moderator: ${reason || "policy"}`,
-          metadata: { listingId, moderationAction: "takedown" },
-          expectedFrom: transaction.status,
-        });
-      }
-
-      // The buyer notification is emitted by the state machine's
-      // transition handler - sending one here too would double-notify.
-      affected += 1;
-    } catch (e) {
-      // Log per-transaction rather than aborting: one Stripe failure
-      // shouldn't leave the remaining buyers unrefunded, and this needs a
-      // human either way.
-      logger.error("moderation_refund_failed", {
-        transactionId: transaction.id, listingId, status: transaction.status, err: e,
-      });
-    }
-  }
-
-  return { affected };
-}
-
 // The order's audit trail. Visible to the two parties and to admins -
 // it's their transaction, and in a dispute the timeline is the evidence.
 async function history(userId, transactionIdInput) {
@@ -638,4 +587,4 @@ async function mine(userId) {
   }));
 }
 
-module.exports = { TransactionError, checkout, handleWebhook, releaseExpiredReservations, confirmReceipt, markFulfilled, raiseDispute, resolveDispute, refundForModeration, history, mine, DELIVERY_FEE_CENTS, COMMISSION_PERCENT, RESERVATION_TTL_MINUTES };
+module.exports = { TransactionError, checkout, handleWebhook, releaseExpiredReservations, confirmReceipt, markFulfilled, raiseDispute, resolveDispute, history, mine, DELIVERY_FEE_CENTS, COMMISSION_PERCENT, RESERVATION_TTL_MINUTES };

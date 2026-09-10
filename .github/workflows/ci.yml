@@ -199,6 +199,28 @@ jobs:
             })().catch((e) => { console.error(e.message); process.exit(1); });
           "
 
+      # The launch gate: not just "the containers start" but "a real user
+      # journey survives them". Runs inside the API container against the
+      # composed Postgres and Redis, so it exercises the deployed artefact
+      # rather than a developer machine.
+      #
+      # Stripe-dependent steps stop at checkout: CI has no Stripe keys, and
+      # the journey script exits with a distinct code saying so rather than
+      # reporting a failure it cannot distinguish from a real one.
+      - name: End-to-end journey through the composed stack
+        run: |
+          set +e
+          docker compose exec -T api npm run journey
+          code=$?
+          set -e
+          # 0 = full pass, 2 = stopped at the Stripe step for want of keys.
+          if [ "$code" -eq 0 ] || [ "$code" -eq 2 ]; then
+            echo "journey completed (exit $code)"
+          else
+            echo "::error::journey failed with exit $code"
+            exit 1
+          fi
+
       - name: Dump logs on failure
         if: failure()
         run: docker compose logs --no-color

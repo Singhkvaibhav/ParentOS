@@ -98,10 +98,29 @@ async function signUpVerified(client, name, email) {
   }
   if (signup.status !== 200) throw new Error(`signup failed: ${signup.status} ${signup.raw}`);
 
-  // devCode is only returned when SMTP isn't configured, which is exactly
-  // the situation this script runs in.
+  // devCode is only returned when SMTP is NOT configured. In a
+  // production-shaped environment (including CI, where config validation
+  // requires SMTP_HOST) it's absent and the real code went to an inbox
+  // this script can't read. The stored code is bcrypt-hashed, so it can't
+  // be recovered either.
+  //
+  // In local mode, mark the account verified directly - the same
+  // deliberate shortcut used for Connect onboarding below. Never in real
+  // mode, where whether verification works is part of what's being tested.
   const code = signup.body?.devCode;
-  if (!code) throw new Error("No devCode returned - configure SMTP off, or verify manually.");
+
+  if (!code) {
+    if (MODE === "real") {
+      throw new Error("No devCode returned and STRIPE_MODE=real - verify the account manually, then re-run.");
+    }
+    const { query } = require("../db");
+    await query("UPDATE users SET verified = true, verification_code = NULL WHERE email = $1", [email]);
+    console.log("  NOTE  account verified directly (local mode; SMTP configured so no devCode)");
+
+    const login = await client.post("/api/auth/login", { email, password: "journey-pass-123" });
+    if (login.status !== 200) throw new Error(`login failed: ${login.status} ${login.raw}`);
+    return login.body.user;
+  }
 
   const verify = await client.post("/api/auth/verify", { email, code });
   if (verify.status !== 200) throw new Error(`verify failed: ${verify.status} ${verify.raw}`);

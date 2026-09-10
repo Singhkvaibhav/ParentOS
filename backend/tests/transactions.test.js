@@ -189,7 +189,12 @@ describe("checkout + webhook", () => {
 
     await sendWebhook("payment_intent.succeeded", { id: paymentIntentId });
 
-    expect(mockRefundsCreate).toHaveBeenCalledWith({ payment_intent: paymentIntentId });
+    // Now also asserts the idempotency key. Without one, a retried webhook
+    // (delivery is at-least-once) would refund the buyer a second time.
+    expect(mockRefundsCreate).toHaveBeenCalledWith(
+      { payment_intent: paymentIntentId },
+      expect.objectContaining({ idempotencyKey: expect.stringMatching(/^late-payment-refund-/) })
+    );
     const { rows } = await query("SELECT status FROM transactions WHERE id = $1", [transactionId]);
     expect(rows[0].status).toBe("refunded");
 

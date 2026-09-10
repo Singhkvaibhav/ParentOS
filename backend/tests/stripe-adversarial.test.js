@@ -134,6 +134,109 @@ describe("B: webhook arrives after the reservation has expired", () => {
   });
 });
 
+// Scenario C: the refund succeeds at Stripe but the database transition
+// that records it fails. Money has left the account with nothing here
+// saying so - and because Stripe delivers at-least-once, the same event
+// arrives again and the refund path runs a second time.
+describe("C: Stripe refund succeeds, then the database transition fails", () => {
+  test("a retried late-payment refund reuses one idempotency key, so the buyer isn't refunded twice", async () => {
+    const s = await seller("advCseller@example.com");
+    const b = await createVerifiedUser(app, { name: "B", email: "advCbuyer@example.com" });
+    const listing = await listingFor(s.agent);
+
+    const checkout = await b.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+    const pi = checkout.body.transaction.stripe_payment_intent_id;
+    const transactionId = checkout.body.transaction.id;
+
+    // Put the order in a state where a further success is a LATE payment:
+    // already resolved, so the money has to go back.
+    await query("UPDATE transactions SET status = 'cancelled' WHERE id = $1", [transactionId]);
+    await query("UPDATE listings SET status = 'active', reserved_at = NULL WHERE id = $1", [listing.id]);
+
+    // First delivery: refund fires, then the transition fails. The catch
+    // swallows it, exactly as it would if the database blipped.
+    const orderStateMachine = require("../services/orderStateMachine");
+    const realTransition = orderStateMachine.transitionOrder;
+    orderStateMachine.transitionOrder = jest.fn().mockRejectedValue(new Error("database went away"));
+
+    await webhook("payment_intent.succeeded", { id: pi });
+    orderStateMachine.transitionOrder = realTransition;
+
+    // Stripe retries the same event.
+    await webhook("payment_intent.succeeded", { id: pi });
+
+    const refundCalls = mockRefund.mock.calls;
+    expect(refundCalls.length).toBeGreaterThanOrEqual(1);
+
+    // However many times the path ran, every call carried the SAME
+    // idempotency key - so Stripe returns the original refund rather than
+    // creating a second one. Without a key each retry would be a fresh
+    // refund and the buyer would get their money back twice.
+    const keys = new Set(refundCalls.map(([, opts]) => opts?.idempotencyKey));
+    expect(keys.size).toBe(1);
+    expect([...keys][0]).toBe(`late-payment-refund-${transactionId}`);
+  });
+
+  test("every refund in the codebase passes an idempotency key", async () => {
+    // A refund without one is a double-refund waiting for a retry, and
+    // retries are normal rather than exceptional. Asserted structurally so
+    // a new refund call site can't quietly omit it.
+    const fs = require("fs");
+    const path = require("path");
+    const dir = path.join(__dirname, "..", "services");
+
+    const offenders = [];
+    for (const file of fs.readdirSync(dir).filter((f) => f.endsWith(".js"))) {
+      const src = fs.readFileSync(path.join(dir, file), "utf8");
+      const re = /refunds\.create\(/g;
+      let m;
+      while ((m = re.exec(src))) {
+        // A key can be passed inline or via a variable (the saga builds an
+        // `options` object above the call), so look at a window around the
+        // call rather than only inside its parentheses - matching only the
+        // literal at the call site produced a false positive on code that
+        // was in fact correct.
+        const window = src.slice(Math.max(0, m.index - 800), m.index + 400);
+        if (!window.includes("idempotencyKey")) {
+          offenders.push(`${file}: ${src.slice(m.index, m.index + 70).replace(/\s+/g, " ")}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  test("the moderation saga reuses its stored key when a task is retried", async () => {
+    const admin = await createVerifiedUser(app, { name: "A", email: "advCadmin@example.com" });
+    await query("UPDATE users SET is_admin = true WHERE id = $1", [admin.user.id]);
+    const s = await seller("advCmodseller@example.com");
+    const b = await createVerifiedUser(app, { name: "B", email: "advCmodbuyer@example.com" });
+    const listing = await listingFor(s.agent);
+
+    const checkout = await b.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+    await webhook("payment_intent.succeeded", { id: checkout.body.transaction.stripe_payment_intent_id });
+
+    // Make the refund fail so the task is retried rather than settled.
+    mockRefund.mockRejectedValueOnce(new Error("Stripe unavailable"));
+    await admin.agent.post(`/api/moderation/listings/${listing.id}/takedown`).send({ reason: "Recalled" });
+
+    const { rows: before } = await query(
+      "SELECT idempotency_key, attempts, state FROM moderation_refund_tasks WHERE transaction_id = $1",
+      [checkout.body.transaction.id]
+    );
+    expect(before[0].state).toBe("pending");
+    const storedKey = before[0].idempotency_key;
+
+    mockRefund.mockClear();
+    const { drainTasks } = require("../services/moderationSagaService");
+    await drainTasks({});
+
+    // The retry sends the key persisted at takedown time, not a new one -
+    // which is what makes retrying a refund safe at all.
+    const used = mockRefund.mock.calls.map(([, opts]) => opts?.idempotencyKey);
+    expect(used).toContain(storedKey);
+  });
+});
+
 // Scenario D: Stripe retries deliver the same event several times at once.
 // At-least-once delivery is normal; double-settling is not.
 describe("D: the same webhook delivered concurrently", () => {

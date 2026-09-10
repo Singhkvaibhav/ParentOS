@@ -37,6 +37,58 @@ proper local dev setup you can open in VS Code, extend, and eventually
 deploy. The artifact version still exists as a backup for quick, no-setup
 demos - this project is for real development.
 
+## Thirty-fourth round: the double-refund path, Scenario C, journey in CI
+
+Re-review of the previous round's items. Verified rather than assumed:
+the 30-day JWT is gone and login issues both halves of the session, so #3
+was complete. Two genuine gaps remained.
+
+**A real double-refund path.** Scenario C - refund succeeds at Stripe, the
+database transition that records it fails - was the one adversarial case I
+had not covered, and covering it found a bug.
+
+The late-payment refund in the webhook handler called
+`stripe.refunds.create()` with **no idempotency key**, and the surrounding
+`catch` swallowed transition failures. So: refund fires, `transitionOrder`
+fails, the order keeps its old status, Stripe retries the same event
+(delivery is at-least-once, so retries are expected rather than
+exceptional), the handler sees `needs-refund` again - and the buyer is
+refunded twice. Real money, silently.
+
+Now keyed on the transaction id, so a retry returns the original refund
+instead of creating another. Three tests cover it, including a structural
+one asserting **every** `refunds.create` in the codebase passes a key, so a
+new call site cannot quietly omit one. That check initially produced a
+false positive on correct code - the moderation saga passes its key via a
+variable rather than inline - so it now inspects a window around the call
+rather than only inside the parentheses. Confirmed it genuinely fails when
+a key is removed, rather than passing vacuously.
+
+Removing that path also surfaced `refundForModeration` as dead code,
+superseded by the moderation saga several rounds ago - 64 lines that
+refunded money without an idempotency key and had no callers.
+
+**The full journey now runs in CI.** The compose job previously only
+smoke-tested endpoints, which proves containers start, not that a user
+journey survives them. It now runs `npm run journey` inside the API
+container against the composed Postgres and Redis, accepting exit code 2
+(stopped at the Stripe step for want of keys) as distinct from failure.
+
+That required a fix: the journey depended on `devCode`, which is only
+returned when `NODE_ENV !== "production"`. Inside the container it is
+absent and the real code went to an inbox the script cannot read - and the
+stored code is bcrypt-hashed, so it cannot be recovered either. Local mode
+now verifies the account directly, the same deliberate shortcut already
+used for Connect onboarding, and never in real mode where verification is
+part of what is being tested.
+
+**Still not validated locally:** nginx and certbot, which need real
+certificates and a real domain. Testing them against neither would be
+testing a fiction, so they remain excluded from the CI stack and need a
+staging host.
+
+323 → 326 tests.
+
 ## Thirty-third round: finishing the auth migration, adversarial Stripe tests
 
 **The session model now matches the schema.** `refresh_tokens`, families,
@@ -2288,7 +2340,7 @@ backend/
                   can reach Postgres as a raw type error)
   utils/          validation.js's parseId() - the body-field-id equivalent
                   of middleware/validateId.js, used inside services
-  tests/          Jest + Supertest (323 tests), run against a real
+  tests/          Jest + Supertest (326 tests), run against a real
                   parentos_test database - dbReset.js truncates it before
                   each test file, helpers.js's createVerifiedUser returns a
                   cookie-carrying supertest agent, transactions.test.js and
