@@ -2,7 +2,6 @@
 // data and errors, so this is testable and reusable independent of HTTP.
 const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
-const jwt = require("jsonwebtoken");
 const { query } = require("../db");
 const { sendVerificationEmail } = require("../email");
 
@@ -50,11 +49,10 @@ function signToken(user) {
   // session_version on every request, so bumping that column instantly
   // invalidates every token issued before the bump - for that one user,
   // without touching anyone else's sessions.
-  return jwt.sign(
-    { sub: user.id, sv: user.session_version, email: user.email, name: user.name },
-    process.env.JWT_SECRET,
-    { expiresIn: "30d" }
-  );
+  // Delegated so there is exactly one definition of the access token's
+  // claims and lifetime. Two signers that merely agreed is how `sv` and
+  // `session_version` drifted apart.
+  return require("./tokenService").issueAccessToken(user);
 }
 
 function publicUser(user) {

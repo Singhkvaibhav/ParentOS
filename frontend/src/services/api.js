@@ -32,7 +32,33 @@ async function ensureCsrfToken() {
   return readCsrfToken();
 }
 
-export async function apiFetch(path, { method = "GET", body, signal } = {}) {
+// Access tokens last 15 minutes, so a 401 usually means "expired", not
+// "logged out". Without transparent refresh a short access token would
+// simply mean a short session, which would be worse than the 30-day token
+// it replaced.
+//
+// The in-flight promise is shared: several requests failing at once must
+// trigger ONE refresh, not one each. Concurrent refreshes would race to
+// rotate the same token and the loser would be treated as a replay,
+// revoking the family and logging the user out - the security mechanism
+// firing on its own client.
+let refreshInFlight = null;
+
+async function refreshSession() {
+  if (!refreshInFlight) {
+    refreshInFlight = fetch(`${API_URL}/auth/refresh`, {
+      method: "POST",
+      headers: { [CSRF_HEADER_NAME]: readCsrfToken() || "" },
+      credentials: "include",
+    })
+      .then((res) => res.ok)
+      .catch(() => false)
+      .finally(() => { refreshInFlight = null; });
+  }
+  return refreshInFlight;
+}
+
+export async function apiFetch(path, { method = "GET", body, signal, _retried } = {}) {
   const headers = { "Content-Type": "application/json" };
 
   if (!SAFE_METHODS.has(method)) {
@@ -47,6 +73,14 @@ export async function apiFetch(path, { method = "GET", body, signal } = {}) {
     credentials: "include", // send/receive the httpOnly auth cookie
     signal,
   });
+  // One retry only. If the refreshed token also gets a 401, the session is
+  // genuinely over and retrying again would loop.
+  if (res.status === 401 && !_retried && !path.startsWith("/auth/refresh")) {
+    if (await refreshSession()) {
+      return apiFetch(path, { method, body, signal, _retried: true });
+    }
+  }
+
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || "Request failed.");
   return data;

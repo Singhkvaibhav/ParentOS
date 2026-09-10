@@ -15,6 +15,11 @@ router.get("/me", requireAuth, controller.me);
 
 // Password reset. Both are rate-limited: the request endpoint because it
 // sends email, the confirm endpoint because it accepts a guessable token.
+// Rotates the refresh cookie for a fresh access token. Rate-limited: it's
+// unauthenticated by nature (the whole point is that the access token has
+// expired), so it needs its own throttle.
+router.post("/refresh", verifyLimiter, controller.refresh);
+
 router.post("/forgot-password", resendCodeLimiter, controller.forgotPassword);
 router.post("/reset-password", verifyLimiter, controller.resetPassword);
 

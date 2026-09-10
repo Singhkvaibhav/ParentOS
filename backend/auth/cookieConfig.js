@@ -13,7 +13,26 @@
 // `sameSite: 'none'` (which requires `secure: true`, i.e. HTTPS) instead,
 // or the browser won't attach the cookie to cross-site requests.
 const COOKIE_NAME = "parentos_token";
-const COOKIE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days, matching the JWT's own expiry
+// The access token is short-lived, so its cookie is too. A cookie that
+// outlives the JWT inside it just means the browser keeps sending a token
+// the server will reject.
+const COOKIE_MAX_AGE_MS = 15 * 60 * 1000; // 15 minutes, matching ACCESS_TOKEN_TTL
+
+// The refresh token lives in a SEPARATE cookie scoped to the refresh
+// endpoint. Scoping the path means the browser never attaches it to
+// ordinary API calls, so the long-lived credential isn't exposed on every
+// request the way a single 30-day cookie was.
+const REFRESH_COOKIE_NAME = "parentos_refresh";
+// Scoped to /api/auth rather than just /api/auth/refresh: logout also has
+// to see this cookie in order to REVOKE the token server-side, and a
+// cookie scoped to the refresh path alone is never sent to /api/auth/logout
+// - so logout could only clear the browser's copy while leaving the token
+// itself valid for anyone who had captured it.
+//
+// Still keeps the long-lived credential off every ordinary API request
+// (/api/listings, /api/messages and so on), which was the point.
+const REFRESH_COOKIE_PATH = "/api/auth";
+const REFRESH_COOKIE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 // Attributes that must match between setting and clearing for the browser
 // to recognize it as the same cookie (path/secure/sameSite) - but NOT
@@ -37,4 +56,16 @@ function clearCookieOptions() {
   return baseCookieAttributes();
 }
 
-module.exports = { COOKIE_NAME, cookieOptions, clearCookieOptions };
+function refreshCookieOptions() {
+  return { ...baseCookieAttributes(), path: REFRESH_COOKIE_PATH, maxAge: REFRESH_COOKIE_MAX_AGE_MS };
+}
+
+// Path must match for the browser to recognize it as the same cookie.
+function clearRefreshCookieOptions() {
+  return { ...baseCookieAttributes(), path: REFRESH_COOKIE_PATH };
+}
+
+module.exports = {
+  COOKIE_NAME, cookieOptions, clearCookieOptions,
+  REFRESH_COOKIE_NAME, REFRESH_COOKIE_PATH, refreshCookieOptions, clearRefreshCookieOptions,
+};

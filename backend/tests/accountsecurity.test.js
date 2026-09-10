@@ -210,9 +210,19 @@ describe("refresh token rotation", () => {
     const { rows } = await query("SELECT * FROM users WHERE id = $1", [user.user.id]);
     const issued = await tokens.issueRefreshToken(rows[0], {});
 
-    const { rows: stored } = await query("SELECT token_hash FROM refresh_tokens WHERE user_id = $1", [user.user.id]);
+    // Scoped to this token: logging in now issues one too, so the user has
+    // more than one row and picking the first would be arbitrary.
+    const { rows: stored } = await query(
+      "SELECT token_hash FROM refresh_tokens WHERE token_hash = $1", [tokens.hashToken(issued.raw)]
+    );
+    expect(stored).toHaveLength(1);
     expect(stored[0].token_hash).not.toBe(issued.raw);
-    expect(stored[0].token_hash).toBe(tokens.hashToken(issued.raw));
+
+    // And the raw value appears nowhere in the table.
+    const { rows: plaintext } = await query(
+      "SELECT 1 FROM refresh_tokens WHERE token_hash = $1", [issued.raw]
+    );
+    expect(plaintext).toHaveLength(0);
   });
 
   test("a user can list and revoke an individual session", async () => {
@@ -331,5 +341,145 @@ describe("password reset token is single-use under concurrency", () => {
 
     // Still valid, because the weak password was refused before the claim.
     await expect(security.resetPassword(raw, "a-proper-password")).resolves.toMatchObject({ ok: true });
+  });
+});
+
+// The architecture and the behaviour had diverged: refresh_tokens, families
+// and rotation existed in the database and in tokenService, while login
+// still issued a single 30-day JWT. These assert the session model the
+// schema describes is the one actually in use.
+describe("session model is access + rotating refresh", () => {
+  const jwt = require("jsonwebtoken");
+
+  test("login issues a SHORT-lived access token, not a 30-day one", async () => {
+    const email = "sessionmodel@example.com";
+    await createVerifiedUser(app, { email });
+
+    const agent = await csrfAgent(app);
+    const res = await agent.post("/api/auth/login").send({ email, password: "testpass123" });
+    expect(res.status).toBe(200);
+
+    const cookies = res.headers["set-cookie"].join(";");
+    const access = /parentos_token=([^;]+)/.exec(cookies)[1];
+    const decoded = jwt.decode(access);
+
+    const lifetimeMinutes = (decoded.exp - decoded.iat) / 60;
+    expect(lifetimeMinutes).toBeLessThanOrEqual(15);
+  });
+
+  test("login also issues a refresh cookie, scoped to the auth routes", async () => {
+    const email = "refreshcookie@example.com";
+    await createVerifiedUser(app, { email });
+
+    const agent = await csrfAgent(app);
+    const res = await agent.post("/api/auth/login").send({ email, password: "testpass123" });
+    const refreshCookie = res.headers["set-cookie"].find((c) => c.startsWith("parentos_refresh="));
+
+    expect(refreshCookie).toBeTruthy();
+    // Path-scoped so the long-lived credential isn't attached to every
+    // ordinary API request the way a single 30-day cookie was.
+    expect(refreshCookie).toContain("Path=/api/auth");
+    expect(refreshCookie).toContain("HttpOnly");
+  });
+
+  test("the refresh endpoint returns a new access token and rotates the refresh one", async () => {
+    const email = "rotateendpoint@example.com";
+    await createVerifiedUser(app, { email });
+
+    const agent = await csrfAgent(app);
+    const login = await agent.post("/api/auth/login").send({ email, password: "testpass123" });
+    const firstRefresh = /parentos_refresh=([^;]+)/.exec(login.headers["set-cookie"].join(";"))[1];
+
+    const refreshed = await agent.post("/api/auth/refresh");
+    expect(refreshed.status).toBe(200);
+
+    const secondRefresh = /parentos_refresh=([^;]+)/.exec(refreshed.headers["set-cookie"].join(";"))[1];
+    expect(secondRefresh).not.toBe(firstRefresh);
+  });
+
+  test("a refreshed access token still authenticates ordinary requests", async () => {
+    const email = "refreshthenuse@example.com";
+    await createVerifiedUser(app, { email });
+
+    const agent = await csrfAgent(app);
+    await agent.post("/api/auth/login").send({ email, password: "testpass123" });
+    await agent.post("/api/auth/refresh");
+
+    const me = await agent.get("/api/auth/me");
+    expect(me.status).toBe(200);
+    expect(me.body.user.email).toBe(email);
+  });
+
+  // A cookie the browser merely forgets is still a working credential if it
+  // was ever copied, so logout has to invalidate it server-side.
+  test("logout revokes the refresh token, not just the cookie", async () => {
+    const email = "logoutrevokes@example.com";
+    await createVerifiedUser(app, { email });
+
+    const agent = await csrfAgent(app);
+    const login = await agent.post("/api/auth/login").send({ email, password: "testpass123" });
+    const raw = /parentos_refresh=([^;]+)/.exec(login.headers["set-cookie"].join(";"))[1];
+
+    await agent.post("/api/auth/logout");
+
+    const { rows } = await query(
+      "SELECT revoked_at, revoked_reason FROM refresh_tokens WHERE token_hash = $1",
+      [tokens.hashToken(decodeURIComponent(raw))]
+    );
+    expect(rows[0].revoked_at).not.toBeNull();
+    expect(rows[0].revoked_reason).toBe("logout");
+  });
+
+  // Without revoking refresh tokens, every other device could simply
+  // refresh its way back in - making "log out everywhere" a 15-minute
+  // inconvenience rather than a logout.
+  test("logout-everywhere stops other devices refreshing back in", async () => {
+    const email = "logouteverywhere2@example.com";
+    await createVerifiedUser(app, { email });
+
+    const deviceA = await csrfAgent(app);
+    const deviceB = await csrfAgent(app);
+    await deviceA.post("/api/auth/login").send({ email, password: "testpass123" });
+    await deviceB.post("/api/auth/login").send({ email, password: "testpass123" });
+
+    await deviceA.post("/api/auth/logout-everywhere");
+
+    const bRefresh = await deviceB.post("/api/auth/refresh");
+    expect(bRefresh.status).toBe(401);
+
+    // The device that initiated it stays signed in.
+    expect((await deviceA.get("/api/auth/me")).status).toBe(200);
+  });
+
+  test("refreshing without a cookie is refused", async () => {
+    const agent = await csrfAgent(app);
+    expect((await agent.post("/api/auth/refresh")).status).toBe(401);
+  });
+});
+
+// `sv` vs `session_version`: two issuers that merely agreed on claim names
+// until they didn't, and the divergence was invisible until the refresh
+// path was actually wired into authentication.
+describe("access tokens have one definition", () => {
+  test("tokens from login and from refresh are interchangeable", async () => {
+    const jwt = require("jsonwebtoken");
+    const email = "claimshape@example.com";
+    await createVerifiedUser(app, { email });
+
+    const agent = await csrfAgent(app);
+    const login = await agent.post("/api/auth/login").send({ email, password: "testpass123" });
+    const loginToken = /parentos_token=([^;]+)/.exec(login.headers["set-cookie"].join(";"))[1];
+
+    const refreshed = await agent.post("/api/auth/refresh");
+    const refreshToken = /parentos_token=([^;]+)/.exec(refreshed.headers["set-cookie"].join(";"))[1];
+
+    const a = jwt.decode(decodeURIComponent(loginToken));
+    const b = jwt.decode(decodeURIComponent(refreshToken));
+
+    // Same claim names, or one path authenticates and the other silently
+    // doesn't.
+    expect(Object.keys(a).sort()).toEqual(Object.keys(b).sort());
+    expect(a.sub).toBe(b.sub);
+    expect(a.sv).toBe(b.sv);
   });
 });

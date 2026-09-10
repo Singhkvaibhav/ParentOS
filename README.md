@@ -37,6 +37,69 @@ proper local dev setup you can open in VS Code, extend, and eventually
 deploy. The artifact version still exists as a backup for quick, no-setup
 demos - this project is for real development.
 
+## Thirty-third round: finishing the auth migration, adversarial Stripe tests
+
+**The session model now matches the schema.** `refresh_tokens`, families,
+rotation and replay detection existed in the database and in
+`tokenService`, while login still issued a single 30-day JWT - the
+architecture and the behaviour disagreed, so none of the hardening was
+actually in effect.
+
+Login and verification now issue both halves: a 15-minute access cookie and
+a path-scoped rotating refresh cookie, with `POST /api/auth/refresh` to
+exchange them. The frontend refreshes transparently on a 401, sharing one
+in-flight promise - concurrent refreshes would race to rotate the same
+token, and the loser would be treated as a replay, revoking the family and
+logging the user out. The security mechanism firing on its own client.
+
+Logout now **revokes** the refresh token server-side rather than only
+clearing the cookie: a credential the browser forgets is still valid to
+anyone who captured it. Logout-everywhere revokes all refresh tokens, since
+`session_version` alone only invalidates access tokens - without that,
+every other device could simply refresh its way back in, making it a
+15-minute inconvenience rather than a logout.
+
+**Two bugs surfaced from wiring it together.** Scoping the refresh cookie to
+`/api/auth/refresh` meant logout never received it and so could not revoke
+it - widened to `/api/auth`, which still keeps the long-lived credential
+off ordinary API requests. And the two token issuers had drifted on claim
+names: `authService` signed `sv` while `tokenService` signed
+`session_version`, so every token minted by the refresh path failed
+authentication. There is now one signer, plus a test asserting tokens from
+both paths are interchangeable.
+
+**Adversarial Stripe scenarios**, all seven now covered:
+
+- **Stripe succeeds, our write fails** - the PaymentIntent is cancelled and
+  the listing released rather than left reserved with money committed.
+  Triggered by a genuine unique-index collision rather than by mocking the
+  transaction helper, since a test that mocks the thing it's exercising
+  proves little.
+- **Webhook arrives after the reservation sweep** - the order either settles
+  or is refunded; money is never silently kept against a `pending` row.
+- **Five concurrent deliveries of the same webhook** - settles exactly once,
+  one audit event, no spurious refund. At-least-once delivery is normal;
+  double-settling is not.
+- **`payment_failed` after `payment_succeeded`** - a stale failure does not
+  reverse captured money. Stripe does not guarantee ordering.
+- **Seller's Connect account disabled** - checkout is refused, and an
+  already-paid buyer still has the dispute route, so captured money has a
+  way back.
+
+**Docker: still not validated locally, now validated in CI.** No Docker
+daemon here, so rather than claim otherwise, CI brings up Postgres, Redis
+and the API from the real compose file, waits for health, runs migrations
+inside the container, runs them again to prove idempotence, and smoke-tests
+through the running stack. Writing that caught a mistake of its own: the
+job wrote `.env` when the api service reads `.env.production`, which would
+have produced a container with no configuration.
+
+nginx and certbot are deliberately excluded - they need real certificates
+and a real domain, and testing them against neither would be testing a
+fiction.
+
+308 → 323 tests.
+
 ## Thirty-second round: two critical auth bugs
 
 **Password-reset tokens weren't actually single-use.** The flow read the
@@ -2225,7 +2288,7 @@ backend/
                   can reach Postgres as a raw type error)
   utils/          validation.js's parseId() - the body-field-id equivalent
                   of middleware/validateId.js, used inside services
-  tests/          Jest + Supertest (308 tests), run against a real
+  tests/          Jest + Supertest (323 tests), run against a real
                   parentos_test database - dbReset.js truncates it before
                   each test file, helpers.js's createVerifiedUser returns a
                   cookie-carrying supertest agent, transactions.test.js and

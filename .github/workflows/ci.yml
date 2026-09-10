@@ -120,3 +120,89 @@ jobs:
 
       - name: Compose file is valid
         run: docker compose -f docker-compose.yml config --quiet
+
+  # Brings the real stack up and runs migrations against it. Building an
+  # image proves it compiles; it does not prove the containers can find each
+  # other, that the entrypoint works, or that migrations run inside the
+  # image rather than only on a developer's machine. Those are exactly the
+  # things that fail at deploy time.
+  compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Two files, because they serve different purposes and mixing them up
+      # produces a container that starts with no configuration:
+      #   .env             - compose's own ${VAR} interpolation
+      #   .env.production  - the api service's env_file, i.e. what the
+      #                      process inside the container actually reads
+      - name: Create environment files for the stack
+        run: |
+          cat > .env <<'ENVFILE'
+          POSTGRES_PASSWORD=ci-postgres-password
+          ENVFILE
+
+          cat > .env.production <<'ENVFILE'
+          JWT_SECRET=ci-jwt-secret-that-is-long-enough-for-validation-000000
+          CORS_ORIGINS=https://ci.example
+          FRONTEND_URL=https://ci.example
+          STRIPE_SECRET_KEY=sk_test_ci
+          STRIPE_WEBHOOK_SECRET=whsec_ci
+          SMTP_HOST=smtp.example
+          S3_BUCKET=ci-bucket
+          S3_REGION=eu-north-1
+          S3_ACCESS_KEY_ID=ci-access-key
+          S3_SECRET_ACCESS_KEY=ci-secret-key
+          ENVFILE
+
+      # Only the data services and the API. nginx/certbot want real
+      # certificates and a real domain, which CI has neither of - pretending
+      # otherwise would test a fiction.
+      - name: Start Postgres, Redis and the API
+        run: docker compose up -d --build postgres redis api
+
+      - name: Wait for the API to become healthy
+        run: |
+          for i in $(seq 1 60); do
+            if docker compose exec -T api node -e "require('http').get('http://localhost:4000/api/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"; then
+              echo "API is up"; exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::API never became healthy"
+          docker compose ps
+          docker compose logs --no-color api postgres redis
+          exit 1
+
+      - name: Run migrations inside the container
+        run: docker compose exec -T api npm run migrate
+
+      - name: Migrations are idempotent on a second run
+        run: docker compose exec -T api npm run migrate
+
+      - name: Smoke test through the running stack
+        run: |
+          docker compose exec -T api node -e "
+            const http = require('http');
+            const check = (path, expected) => new Promise((resolve, reject) => {
+              http.get('http://localhost:4000' + path, (r) => {
+                if (r.statusCode === expected) return resolve();
+                reject(new Error(path + ' expected ' + expected + ', got ' + r.statusCode));
+              }).on('error', reject);
+            });
+            (async () => {
+              await check('/api/health', 200);
+              await check('/api/listings', 200);
+              await check('/api/meta/config', 200);
+              await check('/api/transactions/mine', 401);
+              console.log('stack smoke test passed');
+            })().catch((e) => { console.error(e.message); process.exit(1); });
+          "
+
+      - name: Dump logs on failure
+        if: failure()
+        run: docker compose logs --no-color
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v

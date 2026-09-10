@@ -24,13 +24,13 @@ function hashToken(raw) {
 }
 
 function issueAccessToken(user) {
+  // Claim names must match what requireAuth reads. They didn't: this
+  // issued `session_version` while requireAuth checks `sv`, so every token
+  // minted by the refresh path failed authentication. The divergence was
+  // invisible until the two were actually wired together, which is the
+  // argument for one signer rather than two that happen to agree.
   return jwt.sign(
-    {
-      sub: user.id,
-      email: user.email,
-      name: user.name,
-      session_version: user.session_version ?? 0,
-    },
+    { sub: user.id, sv: user.session_version ?? 0, email: user.email, name: user.name },
     process.env.JWT_SECRET,
     { expiresIn: ACCESS_TOKEN_TTL }
   );
