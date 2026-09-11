@@ -128,7 +128,6 @@ jobs:
             'JWT_SECRET=ci-jwt-secret-that-is-long-enough-for-validation-000000' \
             'CORS_ORIGINS=https://ci.example' \
             'FRONTEND_URL=https://ci.example' \
-            'STRIPE_SECRET_KEY=sk_test_ci' \
             'STRIPE_WEBHOOK_SECRET=whsec_ci' \
             'SMTP_HOST=smtp.example' \
             'S3_BUCKET=ci-bucket' \
@@ -161,7 +160,7 @@ jobs:
             'JWT_SECRET=ci-jwt-secret-that-is-long-enough-for-validation-000000' \
             'CORS_ORIGINS=https://ci.example' \
             'FRONTEND_URL=https://ci.example' \
-            'STRIPE_SECRET_KEY=sk_test_ci' \
+            'STRIPE_MODE=local' \
             'STRIPE_WEBHOOK_SECRET=whsec_ci' \
             'SMTP_HOST=smtp.example' \
             'S3_BUCKET=ci-bucket' \
