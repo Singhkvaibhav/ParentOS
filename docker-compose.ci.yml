@@ -1,0 +1,24 @@
+services:
+  fake-stripe:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.fake-stripe
+    restart: "no"
+    environment:
+      NODE_ENV: test
+      FAKE_STRIPE_HOST: 0.0.0.0
+      FAKE_STRIPE_PORT: 4242
+    expose:
+      - "4242"
+
+  api:
+    environment:
+      NODE_ENV: test
+      STRIPE_SECRET_KEY: sk_test_ci
+      STRIPE_WEBHOOK_SECRET: whsec_ci
+      STRIPE_API_HOST: fake-stripe
+      STRIPE_API_PORT: 4242
+      STRIPE_API_PROTOCOL: http
+    depends_on:
+      fake-stripe:
+        condition: service_started

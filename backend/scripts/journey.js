@@ -25,6 +25,7 @@
 //
 // Usage: node scripts/journey.js
 require("dotenv").config();
+const crypto = require("crypto");
 
 const BASE = process.env.JOURNEY_BASE_URL || "http://localhost:4000";
 const MODE = process.env.STRIPE_MODE || "local";
@@ -210,13 +211,25 @@ async function signUpVerified(client, name, email) {
     }
     check("Stripe webhook settled the order", settled, "timed out after 2 minutes");
   } else {
+    const payload = JSON.stringify({
+      type: "payment_intent.succeeded",
+      data: { object: { id: transaction.stripe_payment_intent_id } },
+    });
+
+    const timestamp = Math.floor(Date.now() / 1000);
+    const signedPayload = `${timestamp}.${payload}`;
+    const signature = crypto
+      .createHmac("sha256", process.env.STRIPE_WEBHOOK_SECRET)
+      .update(signedPayload, "utf8")
+      .digest("hex");
+
     const hook = await fetch(`${BASE}/api/transactions/webhook`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "stripe-signature": "local-mode" },
-      body: JSON.stringify({
-        type: "payment_intent.succeeded",
-        data: { object: { id: transaction.stripe_payment_intent_id } },
-      }),
+      headers: {
+        "Content-Type": "application/json",
+        "stripe-signature": `t=${timestamp},v1=${signature}`,
+      },
+      body: payload,
     });
     check("webhook accepted", hook.status === 200, `status ${hook.status}`);
   }

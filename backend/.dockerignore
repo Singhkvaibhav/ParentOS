@@ -5,3 +5,5 @@ uploads/*
 *.db
 *.db-*
 tests
+!tests/
+!tests/fakeStripe.js

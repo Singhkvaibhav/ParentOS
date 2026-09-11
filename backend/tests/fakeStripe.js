@@ -123,7 +123,14 @@ function createFakeStripe() {
 
   return {
     server,
-    listen: () => new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve(server.address().port))),
+    listen: () => {
+      const host = process.env.FAKE_STRIPE_HOST || "127.0.0.1";
+      const port = Number(process.env.FAKE_STRIPE_PORT) || 0;
+
+      return new Promise((resolve) =>
+        server.listen(port, host, () => resolve(server.address().port))
+      );
+    },
     close: () => new Promise((resolve) => server.close(resolve)),
     // Marks a PaymentIntent paid, as confirming a card would.
     succeed: (paymentIntentId) => {

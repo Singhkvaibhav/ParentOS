@@ -1,0 +1,14 @@
+FROM node:20-slim
+
+WORKDIR /app
+
+COPY tests/fakeStripe.js ./tests/fakeStripe.js
+COPY scripts/fakeStripeServer.js ./scripts/fakeStripeServer.js
+
+ENV NODE_ENV=test
+ENV FAKE_STRIPE_HOST=0.0.0.0
+ENV FAKE_STRIPE_PORT=4242
+
+EXPOSE 4242
+
+CMD ["node", "scripts/fakeStripeServer.js"]

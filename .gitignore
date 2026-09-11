@@ -7,3 +7,6 @@ database/*.db-*
 
 # Never commit real production secrets.
 .env.production
+
+backend/uploads/*
+!backend/uploads/.gitkeep
