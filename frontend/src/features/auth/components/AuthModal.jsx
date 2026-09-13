@@ -1,8 +1,11 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { X } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
+import { translateServerError } from "../../../i18n/errorMessages";
 
 export default function AuthModal({ initialView = "login", onClose, showToast }) {
+  const { t } = useTranslation();
   const { signup, verify, login } = useAuth();
   const [view, setView] = useState(initialView);
   const [name, setName] = useState("");
@@ -19,10 +22,10 @@ export default function AuthModal({ initialView = "login", onClose, showToast })
       const res = await signup(name, email, password);
       setDevCode(res.devCode); // only present outside production - see backend/services/authService.js
       setVerifyMessage(res.message);
-      if (res.warning === "email-send-failed") showToast("Couldn't send the verification email right now - try \"resend code\" in a moment.");
+      if (res.warning === "email-send-failed") showToast(t("auth.emailVerificationFailToast"));
       setView("verify");
     } catch (e) {
-      showToast(e.message);
+      showToast(translateServerError(e.message, t));
     } finally {
       setBusy(false);
     }
@@ -34,7 +37,7 @@ export default function AuthModal({ initialView = "login", onClose, showToast })
       await verify(email, code);
       onClose();
     } catch (e) {
-      showToast(e.message);
+      showToast(translateServerError(e.message, t));
     } finally {
       setBusy(false);
     }
@@ -46,7 +49,7 @@ export default function AuthModal({ initialView = "login", onClose, showToast })
       await login(email, password);
       onClose();
     } catch (e) {
-      showToast(e.message);
+      showToast(translateServerError(e.message, t));
     } finally {
       setBusy(false);
     }
@@ -57,40 +60,40 @@ export default function AuthModal({ initialView = "login", onClose, showToast })
       <div className="modal-sheet modal-sheet-small" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <h2 className="uk-display modal-title">
-            {view === "signup" ? "Create your account" : view === "verify" ? "Verify your email" : "Log in"}
+            {view === "signup" ? t("auth.createAccount") : view === "verify" ? t("auth.verifyEmail") : t("auth.login")}
           </h2>
-          <button onClick={onClose} aria-label="Close"><X size={20} /></button>
+          <button onClick={onClose} aria-label={t("listingDetails.closeAria")}><X size={20} /></button>
         </div>
 
         {view === "verify" ? (
           <div className="form-stack">
-            <p className="small">{verifyMessage || "Enter the verification code."}</p>
+            <p className="small">{verifyMessage || t("auth.enterCodeDefault")}</p>
             {devCode && (
               <>
-                <p className="small">This build has email verification codes visible for testing - a real deployment wouldn't show this:</p>
+                <p className="small">{t("auth.devCodeNotice")}</p>
                 <p className="uk-display verify-code">{devCode}</p>
               </>
             )}
             <div>
-              <p className="field-label">Enter the code</p>
+              <p className="field-label">{t("auth.enterCodeLabel")}</p>
               <input value={code} onChange={(e) => setCode(e.target.value)} className="input" />
             </div>
-            <button onClick={handleVerify} disabled={busy} className="btn btn-moss btn-block">Confirm</button>
+            <button onClick={handleVerify} disabled={busy} className="btn btn-moss btn-block">{t("auth.confirm")}</button>
           </div>
         ) : view === "signup" ? (
           <div className="form-stack">
-            <div><p className="field-label">Your name</p><input value={name} onChange={(e) => setName(e.target.value)} className="input" /></div>
-            <div><p className="field-label">Email</p><input value={email} onChange={(e) => setEmail(e.target.value)} type="email" className="input" /></div>
-            <div><p className="field-label">Password</p><input value={password} onChange={(e) => setPassword(e.target.value)} type="password" className="input" /></div>
-            <button onClick={handleSignup} disabled={busy} className="btn btn-berry btn-block">Sign up</button>
-            <p className="small center">Already have an account? <button className="link-button" onClick={() => setView("login")}>Log in</button></p>
+            <div><p className="field-label">{t("auth.yourName")}</p><input value={name} onChange={(e) => setName(e.target.value)} className="input" /></div>
+            <div><p className="field-label">{t("auth.email")}</p><input value={email} onChange={(e) => setEmail(e.target.value)} type="email" className="input" /></div>
+            <div><p className="field-label">{t("auth.password")}</p><input value={password} onChange={(e) => setPassword(e.target.value)} type="password" className="input" /></div>
+            <button onClick={handleSignup} disabled={busy} className="btn btn-berry btn-block">{t("auth.signUp")}</button>
+            <p className="small center">{t("auth.alreadyHaveAccount")} <button className="link-button" onClick={() => setView("login")}>{t("auth.login")}</button></p>
           </div>
         ) : (
           <div className="form-stack">
-            <div><p className="field-label">Email</p><input value={email} onChange={(e) => setEmail(e.target.value)} type="email" className="input" /></div>
-            <div><p className="field-label">Password</p><input value={password} onChange={(e) => setPassword(e.target.value)} type="password" className="input" /></div>
-            <button onClick={handleLogin} disabled={busy} className="btn btn-moss btn-block">Log in</button>
-            <p className="small center">New here? <button className="link-button" onClick={() => setView("signup")}>Create an account</button></p>
+            <div><p className="field-label">{t("auth.email")}</p><input value={email} onChange={(e) => setEmail(e.target.value)} type="email" className="input" /></div>
+            <div><p className="field-label">{t("auth.password")}</p><input value={password} onChange={(e) => setPassword(e.target.value)} type="password" className="input" /></div>
+            <button onClick={handleLogin} disabled={busy} className="btn btn-moss btn-block">{t("auth.login")}</button>
+            <p className="small center">{t("auth.newHere")} <button className="link-button" onClick={() => setView("signup")}>{t("auth.createAnAccount")}</button></p>
           </div>
         )}
       </div>

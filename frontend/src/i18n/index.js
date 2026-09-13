@@ -1,0 +1,24 @@
+import i18n from "i18next";
+import { initReactI18next } from "react-i18next";
+import LanguageDetector from "i18next-browser-languagedetector";
+import en from "./locales/en.json";
+import fi from "./locales/fi.json";
+
+i18n
+  .use(LanguageDetector)
+  .use(initReactI18next)
+  .init({
+    resources: { en: { translation: en }, fi: { translation: fi } },
+    fallbackLng: "en",
+    supportedLngs: ["en", "fi"],
+    interpolation: { escapeValue: false },
+    detection: {
+      // Remembered choice wins; otherwise fall back to the browser's
+      // language so a Finnish-language browser sees Finnish by default.
+      order: ["localStorage", "navigator"],
+      lookupLocalStorage: "uk_lang",
+      caches: ["localStorage"],
+    },
+  });
+
+export default i18n;

@@ -9,6 +9,7 @@
 const nodemailer = require("nodemailer");
 const logger = require("../logger");
 const { BRAND } = require("../config");
+const i18n = require("../i18n");
 
 // (P1 #6) User-controlled values must never reach an HTML email body
 // unescaped. A display name of `<img src=x onerror=...>` or an injected
@@ -52,10 +53,10 @@ async function sendWithRetry(mailOptions, attempts = 2) {
   throw lastError;
 }
 
-async function sendVerificationEmail(to, name, code) {
-  const subject = `Verify your ${BRAND} account`;
-  const text = `Hi ${name},\n\nYour verification code is: ${code}\n\nThis code expires in 15 minutes.\n\n- ${BRAND}`;
-  const html = `<p>Hi ${escapeHtml(name)},</p><p>Your verification code is:</p><h2 style="letter-spacing:0.2em">${escapeHtml(code)}</h2><p>This code expires in 15 minutes.</p>`;
+async function sendVerificationEmail(to, name, code, locale = "en") {
+  const subject = i18n.t(locale, "verifySubject");
+  const text = i18n.t(locale, "verifyText", { name, code });
+  const html = i18n.t(locale, "verifyHtml", { name, code, escape: escapeHtml });
 
   if (!SMTP_CONFIGURED) {
     // Local dev without email credentials: log instead of silently doing

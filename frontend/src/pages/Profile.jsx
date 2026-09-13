@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useAuth } from "../features/auth/hooks/useAuth";
 import { useMyListings } from "../features/listings/hooks/useMyListings";
 import { useToast } from "../hooks/useToast";
@@ -15,21 +16,22 @@ import OrderList from "../features/orders/components/OrderList";
 // longer requires reading past payout logic to find it, and each piece can
 // be tested and reused on its own.
 export default function Profile() {
+  const { t } = useTranslation();
   const { user, logout } = useAuth();
   const { toast, showToast } = useToast();
   const listingsHook = useMyListings(!!user);
 
-  if (!user) return <p className="muted p-6">Log in to see your profile.</p>;
+  if (!user) return <p className="muted p-6">{t("profile.loginPrompt")}</p>;
 
   return (
     <section className="page-section">
-      <h1 className="uk-display page-title">Your profile</h1>
+      <h1 className="uk-display page-title">{t("profile.title")}</h1>
 
       <div className="profile-card">
         <p><strong>{user.name}</strong></p>
         <p className="muted">{user.email}</p>
-        <p className="muted small">{user.verified ? "Verified seller" : "Not yet verified"}</p>
-        <button onClick={logout} className="btn btn-outline mt-4">Log out</button>
+        <p className="muted small">{user.verified ? t("profile.verifiedSeller") : t("profile.notVerified")}</p>
+        <button onClick={logout} className="btn btn-outline mt-4">{t("profile.logout")}</button>
       </div>
 
       <PayoutSetup enabled={!!user} />

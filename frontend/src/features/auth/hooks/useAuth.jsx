@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useState, useCallback } from "react";
+import i18n from "../../../i18n";
 import { authService } from "../../../services/auth";
 import { isAbortError } from "../../../services/api";
 
@@ -30,7 +31,10 @@ export function AuthProvider({ children }) {
     return () => controller.abort();
   }, []);
 
-  const signup = useCallback((name, email, password) => authService.signup(name, email, password), []);
+  const signup = useCallback(
+    (name, email, password) => authService.signup(name, email, password, i18n.resolvedLanguage),
+    []
+  );
   const verify = useCallback(async (email, code) => {
     const { user } = await authService.verify(email, code);
     setUser(user);

@@ -1,16 +1,19 @@
 import { useState, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { usersService } from "../services/users";
 import { reviewsService } from "../services/reviews";
 import { listingsService } from "../services/listings";
 import TrustBadge from "../features/profile/components/TrustBadge";
 import ListingGrid from "../features/listings/components/ListingGrid";
+import { translateServerError } from "../i18n/errorMessages";
 
 // The "Seller profile" node in the user journey: a buyer deciding whether
 // to deal with someone needs to see who they are, what else they're
 // selling, and what previous buyers said - all in one place, rather than
 // inferring it from a single listing card.
 export default function SellerProfile() {
+  const { t, i18n } = useTranslation();
   const { id } = useParams();
   const [profile, setProfile] = useState(null);
   const [reviews, setReviews] = useState([]);
@@ -22,7 +25,7 @@ export default function SellerProfile() {
 
     usersService.publicProfile(id)
       .then((d) => { if (!cancelled) setProfile(d.user); })
-      .catch((e) => { if (!cancelled) setError(e.message); });
+      .catch((e) => { if (!cancelled) setError(translateServerError(e.message, t)); });
 
     reviewsService.listForUser(id)
       .then((d) => { if (!cancelled) setReviews(d.reviews); })
@@ -40,10 +43,10 @@ export default function SellerProfile() {
       .catch(() => {});
 
     return () => { cancelled = true; };
-  }, [id]);
+  }, [id, t]);
 
   if (error) return <p className="muted p-6">{error}</p>;
-  if (!profile) return <p className="muted p-6">Loading...</p>;
+  if (!profile) return <p className="muted p-6">{t("common.loading")}</p>;
 
   return (
     <section className="page-section">
@@ -52,14 +55,14 @@ export default function SellerProfile() {
       <div className="profile-card">
         {profile.trust && <TrustBadge trust={profile.trust} />}
         <p className="small">
-          Member since {new Date(profile.created_at).toLocaleDateString()}
-          {profile.listingCount > 0 && ` · ${profile.listingCount} listings`}
+          {t("sellerProfile.memberSince", { date: new Date(profile.created_at).toLocaleDateString(i18n.resolvedLanguage) })}
+          {profile.listingCount > 0 && t("sellerProfile.listingCount", { count: profile.listingCount })}
         </p>
       </div>
 
-      <h2 className="uk-display page-title mt-5">Their listings</h2>
+      <h2 className="uk-display page-title mt-5">{t("sellerProfile.theirListings")}</h2>
       {listings.length === 0 ? (
-        <p className="muted">Nothing listed right now.</p>
+        <p className="muted">{t("sellerProfile.nothingListed")}</p>
       ) : (
         <ListingGrid
           listings={listings}
@@ -68,9 +71,9 @@ export default function SellerProfile() {
         />
       )}
 
-      <h2 className="uk-display page-title mt-5">Reviews</h2>
+      <h2 className="uk-display page-title mt-5">{t("sellerProfile.reviews")}</h2>
       {reviews.length === 0 ? (
-        <p className="muted">No reviews yet.</p>
+        <p className="muted">{t("sellerProfile.noReviews")}</p>
       ) : (
         <div className="inbox-list">
           {reviews.map((r) => (
@@ -84,7 +87,7 @@ export default function SellerProfile() {
         </div>
       )}
 
-      <p className="mt-4"><Link to="/marketplace" className="link-button">← Back to browsing</Link></p>
+      <p className="mt-4"><Link to="/marketplace" className="link-button">{t("sellerProfile.backToBrowsing")}</Link></p>
     </section>
   );
 }

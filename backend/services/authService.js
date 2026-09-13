@@ -4,6 +4,7 @@ const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
 const { query } = require("../db");
 const { sendVerificationEmail } = require("../email");
+const { normalizeLocale } = require("../i18n");
 
 const CODE_TTL_MS = 15 * 60 * 1000; // verification codes expire after 15 minutes
 const MAX_VERIFY_ATTEMPTS = 5;
@@ -62,7 +63,7 @@ function publicUser(user) {
   return { id: user.id, name: user.name, email: user.email, verified: !!user.verified, isAdmin: !!user.is_admin };
 }
 
-async function signup({ name, email, password }) {
+async function signup({ name, email, password, locale }) {
   if (!name?.trim() || !email?.trim() || !password || password.length < 6) {
     throw new AuthError(400, "Name, email and a password (6+ characters) are required.");
   }
@@ -70,17 +71,21 @@ async function signup({ name, email, password }) {
   const existing = await query("SELECT id FROM users WHERE email = $1", [normalizedEmail]);
   if (existing.rows.length > 0) throw new AuthError(409, "An account with that email already exists.");
 
+  // The frontend's current UI language at signup time - not user input in
+  // the security sense, but normalized against the supported set anyway so
+  // an unexpected value can't violate the users_locale_check constraint.
+  const userLocale = normalizeLocale(locale);
   const passwordHash = await bcrypt.hash(password, 10);
   const code = generateCode();
   const codeHash = await hashCode(code);
   const expiresAt = new Date(Date.now() + CODE_TTL_MS);
   await query(
-    `INSERT INTO users (name, email, password_hash, verified, verification_code, verification_expires_at, verification_attempts)
-     VALUES ($1, $2, $3, false, $4, $5, 0)`,
-    [name.trim(), normalizedEmail, passwordHash, codeHash, expiresAt]
+    `INSERT INTO users (name, email, password_hash, verified, verification_code, verification_expires_at, verification_attempts, locale)
+     VALUES ($1, $2, $3, false, $4, $5, 0, $6)`,
+    [name.trim(), normalizedEmail, passwordHash, codeHash, expiresAt, userLocale]
   );
 
-  const emailResult = await sendVerificationEmail(normalizedEmail, name.trim(), code);
+  const emailResult = await sendVerificationEmail(normalizedEmail, name.trim(), code, userLocale);
   const devCode = process.env.NODE_ENV !== "production" ? code : null;
   return {
     message: emailResult.sent
@@ -111,7 +116,7 @@ async function resendCode({ email }) {
     [codeHash, expiresAt, user.id]
   );
 
-  const emailResult = await sendVerificationEmail(user.email, user.name, code);
+  const emailResult = await sendVerificationEmail(user.email, user.name, code, user.locale);
   const devCode = process.env.NODE_ENV !== "production" ? code : null;
   return {
     message: emailResult.sent

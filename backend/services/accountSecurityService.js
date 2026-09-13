@@ -4,7 +4,7 @@ const { query, withTransaction } = require("../db");
 const { sendNotificationEmail } = require("../email");
 const { revokeAllForUser, hashToken } = require("./tokenService");
 const logger = require("../logger");
-const { BRAND } = require("../config");
+const i18n = require("../i18n");
 
 class AccountSecurityError extends Error {
   constructor(status, message) {
@@ -27,7 +27,7 @@ const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 // the accounts belong to parents, confirming that a specific person has an
 // account here is itself a privacy leak, separate from any takeover risk.
 async function requestPasswordReset(email, { ip } = {}) {
-  const { rows } = await query("SELECT id, name, email FROM users WHERE email = $1", [
+  const { rows } = await query("SELECT id, name, email, locale FROM users WHERE email = $1", [
     String(email || "").trim().toLowerCase(),
   ]);
   const user = rows[0];
@@ -51,8 +51,8 @@ async function requestPasswordReset(email, { ip } = {}) {
     const link = `${FRONTEND_URL}/reset-password?token=${raw}`;
     await sendNotificationEmail(
       user.email,
-      `Reset your ${BRAND} password`,
-      `Hi ${user.name},\n\nSomeone asked to reset your password. This link works once and expires in ${RESET_TOKEN_TTL_MINUTES} minutes:\n\n${link}\n\nIf this wasn't you, you can ignore this email - your password hasn't changed.\n\n- ${BRAND}`
+      i18n.t(user.locale, "resetSubject"),
+      i18n.t(user.locale, "resetText", { name: user.name, link, ttlMinutes: RESET_TOKEN_TTL_MINUTES })
     );
 
     logger.info("password_reset_requested", { userId: user.id, ip });
@@ -132,14 +132,14 @@ async function resetPassword(rawToken, newPassword) {
   // - the same reasoning as the refresh-token reuse fix.
   await revokeAllForUser(userId, "password_reset");
 
-  const { rows: userRows } = await query("SELECT email, name FROM users WHERE id = $1", [userId]);
+  const { rows: userRows } = await query("SELECT email, name, locale FROM users WHERE id = $1", [userId]);
   if (userRows[0]) {
     // Notifying after the fact is what lets a victim notice a takeover
     // they didn't initiate.
     await sendNotificationEmail(
       userRows[0].email,
-      `Your ${BRAND} password was changed`,
-      `Hi ${userRows[0].name},\n\nYour password was just changed and all other devices were signed out.\n\nIf this wasn't you, reset your password immediately and contact us.\n\n- ${BRAND}`
+      i18n.t(userRows[0].locale, "passwordChangedSubject"),
+      i18n.t(userRows[0].locale, "passwordChangedText", { name: userRows[0].name })
     );
   }
 
@@ -210,8 +210,8 @@ async function recordLogin({ userId = null, email, outcome, ip, userAgent, suspi
 async function notifySuspiciousLogin(user, { ip, userAgent }) {
   await sendNotificationEmail(
     user.email,
-    `New sign-in to your ${BRAND} account`,
-    `Hi ${user.name},\n\nYour account was just signed in to from a device or location we haven't seen before.\n\nIP: ${ip || "unknown"}\nDevice: ${userAgent || "unknown"}\n\nIf this was you, nothing to do. If not, reset your password and sign out all devices from your profile.\n\n- ${BRAND}`
+    i18n.t(user.locale, "suspiciousLoginSubject"),
+    i18n.t(user.locale, "suspiciousLoginText", { name: user.name, ip, userAgent })
   );
   logger.warn("suspicious_login_notified", { userId: user.id, ip });
 }

@@ -63,8 +63,10 @@ export function areaEntry(city, area) {
   return (AREA_DATA[city] || []).find((a) => a.area === area) || AREA_DATA[city]?.[0];
 }
 
+// Returns an i18n key suffix (see locales' "sizeLabel" namespace) rather
+// than display text, so callers translate it: t(`sizeLabel.${sizeLabelFor(category)}`).
 export function sizeLabelFor(category) {
-  if (category === "toys") return "Recommended age";
-  if (category === "accessories") return "Fits";
-  return "Size";
+  if (category === "toys") return "age";
+  if (category === "accessories") return "fits";
+  return "size";
 }

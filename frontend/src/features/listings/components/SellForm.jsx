@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { X, Camera } from "lucide-react";
 import { CITIES, AREA_DATA, areaEntry, sizeLabelFor } from "../../../constants";
 import { useMarketplaceConfig } from "../../marketplace/hooks/useMarketplaceConfig";
@@ -6,8 +7,10 @@ import { compressImage, eurosToCents } from "../../../utils";
 import { listingsService } from "../../../services/listings";
 import { uploadsService } from "../../../services/uploads";
 import { useAuth } from "../../auth/hooks/useAuth";
+import { translateServerError } from "../../../i18n/errorMessages";
 
 export default function SellForm({ onClose, onCreated, onUpdated, showToast, editingListing }) {
+  const { t } = useTranslation();
   const { user } = useAuth();
   const isEditing = !!editingListing;
   const { categories, conditions, loaded: configLoaded, failed: configFailed } = useMarketplaceConfig();
@@ -43,7 +46,7 @@ export default function SellForm({ onClose, onCreated, onUpdated, showToast, edi
       const { url } = await uploadsService.uploadImage(localDataUrl);
       setPhotoUrl(url);
     } catch {
-      showToast("Couldn't upload that photo - try another one.");
+      showToast(t("sellForm.toastPhotoFail"));
     } finally {
       setPhotoBusy(false);
     }
@@ -51,11 +54,11 @@ export default function SellForm({ onClose, onCreated, onUpdated, showToast, edi
 
   async function handleSubmit() {
     if (!title.trim() || !(Number(price) > 0)) {
-      showToast("Fill in a title and a price above \u20ac0.");
+      showToast(t("sellForm.toastFillTitlePrice"));
       return;
     }
     if (photoBusy) {
-      showToast("Still uploading the photo - one second.");
+      showToast(t("sellForm.toastStillUploading"));
       return;
     }
     setSubmitting(true);
@@ -67,17 +70,17 @@ export default function SellForm({ onClose, onCreated, onUpdated, showToast, edi
           { category, title: title.trim(), priceCents, sizeOrAge, condition, city, area, description, photoUrl }
         );
         onUpdated(listing);
-        showToast("Listing updated.");
+        showToast(t("sellForm.toastUpdated"));
       } else {
         const { listing } = await listingsService.create(
           { category, title: title.trim(), priceCents, sizeOrAge, condition, city, area, description, photoUrl }
         );
         onCreated(listing);
-        showToast("Listing published.");
+        showToast(t("sellForm.toastPublished"));
       }
       onClose();
     } catch (e) {
-      showToast(e.message);
+      showToast(translateServerError(e.message, t));
     } finally {
       setSubmitting(false);
     }
@@ -87,55 +90,55 @@ export default function SellForm({ onClose, onCreated, onUpdated, showToast, edi
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
-          <h2 className="uk-display modal-title">{isEditing ? "Edit listing" : "List an item"}</h2>
-          <button onClick={onClose} aria-label="Close"><X size={20} /></button>
+          <h2 className="uk-display modal-title">{isEditing ? t("sellForm.editTitle") : t("sellForm.newTitle")}</h2>
+          <button onClick={onClose} aria-label={t("listingDetails.closeAria")}><X size={20} /></button>
         </div>
 
-        <p className="field-label">Category</p>
+        <p className="field-label">{t("sellForm.category")}</p>
         <div className="pill-row mb-4">
           {categories.map((c) => (
             <button key={c.id} onClick={() => setCategory(c.id)} className={`pill pill-toggle ${category === c.id ? "pill-active" : ""}`}>
-              <c.icon size={14} />{c.label}
+              <c.icon size={14} />{t(`categories.${c.id}`, { defaultValue: c.label })}
             </button>
           ))}
         </div>
 
         <div className="form-stack">
           <div>
-            <p className="field-label">Photo (optional)</p>
+            <p className="field-label">{t("sellForm.photoLabel")}</p>
             <label className="photo-picker">
               <Camera size={16} style={{ color: "var(--stone)" }} />
-              {photoBusy ? "Uploading..." : photoUrl ? "Photo added - tap to replace" : "Take or choose a photo"}
+              {photoBusy ? t("sellForm.uploading") : photoUrl ? t("sellForm.photoAddedTapReplace") : t("sellForm.takeOrChoosePhoto")}
               <input type="file" accept="image/*" capture="environment" className="hidden" onChange={handlePhoto} />
             </label>
-            {photoPreview && <img src={photoPreview} alt="Listing preview" className="photo-preview" />}
+            {photoPreview && <img src={photoPreview} alt="" className="photo-preview" />}
           </div>
 
           <div>
-            <p className="field-label">Title</p>
-            <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Reima winter overalls" className="input" />
+            <p className="field-label">{t("sellForm.titleLabel")}</p>
+            <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder={t("sellForm.titlePlaceholder")} className="input" />
           </div>
 
           <div className="two-col">
             <div>
-              <p className="field-label">Price (\u20ac)</p>
-              <input value={price} onChange={(e) => setPrice(e.target.value.replace(/[^0-9.]/g, ""))} placeholder="15" className="input" />
+              <p className="field-label">{t("sellForm.priceLabel")}</p>
+              <input value={price} onChange={(e) => setPrice(e.target.value.replace(/[^0-9.]/g, ""))} placeholder={t("sellForm.pricePlaceholder")} className="input" />
             </div>
             <div>
-              <p className="field-label">{sizeLabelFor(category)}</p>
-              <input value={sizeOrAge} onChange={(e) => setSizeOrAge(e.target.value)} placeholder={category === "toys" ? "3+ years" : "86 cm"} className="input" />
+              <p className="field-label">{t(`sizeLabel.${sizeLabelFor(category)}`)}</p>
+              <input value={sizeOrAge} onChange={(e) => setSizeOrAge(e.target.value)} placeholder={category === "toys" ? t("sellForm.agePlaceholderToys") : t("sellForm.sizePlaceholderOther")} className="input" />
             </div>
           </div>
 
           <div className="two-col">
             <div>
-              <p className="field-label">Condition</p>
+              <p className="field-label">{t("sellForm.conditionLabel")}</p>
               <select value={condition} onChange={(e) => setCondition(e.target.value)} className="select select-full">
-                {conditions.map((c) => <option key={c} value={c}>{c}</option>)}
+                {conditions.map((c) => <option key={c} value={c}>{t(`conditions.${c}`, { defaultValue: c })}</option>)}
               </select>
             </div>
             <div>
-              <p className="field-label">City</p>
+              <p className="field-label">{t("sellForm.cityLabel")}</p>
               <select value={city} onChange={(e) => { setCity(e.target.value); setArea(AREA_DATA[e.target.value][0].area); }} className="select select-full">
                 {CITIES.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
@@ -144,27 +147,26 @@ export default function SellForm({ onClose, onCreated, onUpdated, showToast, edi
 
           <div className="two-col">
             <div>
-              <p className="field-label">Area</p>
+              <p className="field-label">{t("sellForm.areaLabel")}</p>
               <select value={area} onChange={(e) => setArea(e.target.value)} className="select select-full">
                 {AREA_DATA[city].map((a) => <option key={a.area} value={a.area}>{a.area}</option>)}
               </select>
             </div>
             <div>
-              <p className="field-label">Pincode</p>
+              <p className="field-label">{t("sellForm.pincodeLabel")}</p>
               <input value={areaEntry(city, area)?.pincode || ""} readOnly disabled className="input input-disabled" />
             </div>
           </div>
 
           <div>
-            <p className="field-label">Description</p>
-            <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} placeholder="Condition details, why you're selling, anything a buyer should know." className="input textarea" />
+            <p className="field-label">{t("sellForm.descriptionLabel")}</p>
+            <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} placeholder={t("sellForm.descriptionPlaceholder")} className="input textarea" />
           </div>
         </div>
 
         {configFailed && (
           <p className="small">
-            Couldn&apos;t load the marketplace settings, so publishing is unavailable right now.
-            Please refresh and try again.
+            {t("sellForm.configFailed")}
           </p>
         )}
         <button
@@ -176,7 +178,7 @@ export default function SellForm({ onClose, onCreated, onUpdated, showToast, edi
           disabled={submitting || !configLoaded || configFailed || !category || !condition}
           className="btn btn-berry btn-block mt-5"
         >
-          {submitting ? "Saving..." : isEditing ? "Save changes" : "Publish listing"}
+          {submitting ? t("sellForm.saving") : isEditing ? t("sellForm.saveChanges") : t("sellForm.publishListing")}
         </button>
       </div>
     </div>

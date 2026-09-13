@@ -1,12 +1,14 @@
+import { useTranslation } from "react-i18next";
 import ListingCard from "./ListingCard";
 
 export default function ListingGrid({ listings, loading, onSelect }) {
-  if (loading) return <p className="muted">Loading listings...</p>;
+  const { t } = useTranslation();
+  if (loading) return <p className="muted">{t("marketplace.loadingListings")}</p>;
   if (listings.length === 0) {
     return (
       <div className="empty-state">
-        <p className="uk-display empty-state-title">No little treasures match yet.</p>
-        <p className="muted">Try a different filter, or be the first to list one.</p>
+        <p className="uk-display empty-state-title">{t("marketplace.emptyTitle")}</p>
+        <p className="muted">{t("marketplace.emptyBody")}</p>
       </div>
     );
   }

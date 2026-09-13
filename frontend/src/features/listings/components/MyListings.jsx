@@ -1,13 +1,19 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { formatEuro } from "../../../utils";
 import SellForm from "./SellForm";
-
-const STATUS_LABEL = { active: "Active", reserved: "Reserved", sold: "Sold" };
+import { translateServerError } from "../../../i18n/errorMessages";
 
 // A seller managing their own listings: edit, status transitions, delete.
 // Receives the listings hook rather than owning it, because the profile
 // page and the hook's refresh are shared with other surfaces.
 export default function MyListings({ listingsHook, showToast }) {
+  const { t } = useTranslation();
+  const STATUS_LABEL = {
+    active: t("myListings.statusActive"),
+    reserved: t("myListings.statusReserved"),
+    sold: t("myListings.statusSold"),
+  };
   const { listings, loading, refresh, reserve, markSold, relist, remove } = listingsHook;
   const [editing, setEditing] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
@@ -16,7 +22,7 @@ export default function MyListings({ listingsHook, showToast }) {
     try {
       await fn();
     } catch (e) {
-      showToast(e.message);
+      showToast(translateServerError(e.message, t));
     }
   }
 
@@ -27,11 +33,11 @@ export default function MyListings({ listingsHook, showToast }) {
 
   return (
     <>
-      <h2 className="uk-display page-title mt-5">My listings</h2>
+      <h2 className="uk-display page-title mt-5">{t("myListings.title")}</h2>
       {loading ? (
-        <p className="muted">Loading...</p>
+        <p className="muted">{t("common.loading")}</p>
       ) : listings.length === 0 ? (
-        <p className="muted">You haven&apos;t listed anything yet.</p>
+        <p className="muted">{t("myListings.empty")}</p>
       ) : (
         <div className="my-listings">
           {listings.map((l) => (
@@ -44,26 +50,26 @@ export default function MyListings({ listingsHook, showToast }) {
                 <p className="small">{formatEuro(l.price_cents)} &middot; {l.area}, {l.city}</p>
               </div>
               <div className="my-listing-actions">
-                <button onClick={() => setEditing(l)} className="btn btn-outline btn-sm">Edit</button>
+                <button onClick={() => setEditing(l)} className="btn btn-outline btn-sm">{t("myListings.edit")}</button>
                 {l.status === "active" && (
-                  <button onClick={() => run(() => reserve(l.id))} className="btn btn-outline btn-sm">Mark reserved</button>
+                  <button onClick={() => run(() => reserve(l.id))} className="btn btn-outline btn-sm">{t("myListings.markReserved")}</button>
                 )}
                 {l.status === "active" && (
-                  <button onClick={() => run(() => markSold(l.id))} className="btn btn-outline btn-sm">Mark sold</button>
+                  <button onClick={() => run(() => markSold(l.id))} className="btn btn-outline btn-sm">{t("myListings.markSold")}</button>
                 )}
                 {l.status === "sold" && (
-                  <button onClick={() => run(() => relist(l.id))} className="btn btn-moss btn-sm">Relist</button>
+                  <button onClick={() => run(() => relist(l.id))} className="btn btn-moss btn-sm">{t("myListings.relist")}</button>
                 )}
                 {l.status === "reserved" && (
-                  <span className="small">Payment in progress - resolves automatically</span>
+                  <span className="small">{t("myListings.paymentInProgress")}</span>
                 )}
                 {confirmDeleteId === l.id ? (
                   <>
-                    <button onClick={() => handleDelete(l.id)} className="btn btn-berry btn-sm">Confirm delete</button>
-                    <button onClick={() => setConfirmDeleteId(null)} className="link-button">Cancel</button>
+                    <button onClick={() => handleDelete(l.id)} className="btn btn-berry btn-sm">{t("myListings.confirmDelete")}</button>
+                    <button onClick={() => setConfirmDeleteId(null)} className="link-button">{t("myListings.cancel")}</button>
                   </>
                 ) : (
-                  <button onClick={() => setConfirmDeleteId(l.id)} className="btn btn-outline btn-sm">Delete</button>
+                  <button onClick={() => setConfirmDeleteId(l.id)} className="btn btn-outline btn-sm">{t("myListings.delete")}</button>
                 )}
               </div>
             </div>

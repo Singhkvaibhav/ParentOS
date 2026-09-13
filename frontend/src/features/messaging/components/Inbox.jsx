@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { messagingService } from "../../../services/messaging";
 import { X } from "lucide-react";
 import ChatThread from "./ChatThread";
@@ -6,6 +7,7 @@ import ChatThread from "./ChatThread";
 // Unified inbox: shows every conversation the user is in, whether they're
 // the buyer or the seller in it, with a role badge and unread count.
 export default function Inbox({ onClose, conversationsHook }) {
+  const { t } = useTranslation();
   const { conversations, loading, reply, markRead } = conversationsHook;
   const [openId, setOpenId] = useState(null);
   const open = conversations.find((c) => c.id === openId);
@@ -46,22 +48,22 @@ export default function Inbox({ onClose, conversationsHook }) {
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-sheet" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
-          <h2 className="uk-display modal-title">Your messages</h2>
-          <button onClick={onClose} aria-label="Close"><X size={20} /></button>
+          <h2 className="uk-display modal-title">{t("inbox.title")}</h2>
+          <button onClick={onClose} aria-label={t("listingDetails.closeAria")}><X size={20} /></button>
         </div>
 
         {!openId ? (
           loading ? (
-            <p className="muted">Loading...</p>
+            <p className="muted">{t("common.loading")}</p>
           ) : conversations.length === 0 ? (
-            <p className="muted">No messages yet.</p>
+            <p className="muted">{t("inbox.empty")}</p>
           ) : (
             <div className="inbox-list">
               {conversations.map((c) => (
                 <button key={c.id} onClick={() => handleOpen(c)} className="inbox-item">
                   <p className="inbox-item-title">
                     {c.listingTitle} &middot; {c.otherPartyName}
-                    <span className={`role-badge role-${c.role}`}>{c.role === "buyer" ? "Buying" : "Selling"}</span>
+                    <span className={`role-badge role-${c.role}`}>{c.role === "buyer" ? t("inbox.buying") : t("inbox.selling")}</span>
                     {c.unreadCount > 0 && <span className="unread-dot">{c.unreadCount}</span>}
                   </p>
                   <p className="uk-clamp2 small">{c.lastMessage}</p>
@@ -71,10 +73,10 @@ export default function Inbox({ onClose, conversationsHook }) {
           )
         ) : (
           <div>
-            <button onClick={() => setOpenId(null)} className="link-button mb-3">&larr; Back to messages</button>
+            <button onClick={() => setOpenId(null)} className="link-button mb-3">{t("inbox.backToMessages")}</button>
             {hasMore && (
               <button onClick={() => loadOlder().catch(() => {})} className="link-button mb-3">
-                Load earlier messages
+                {t("inbox.loadEarlier")}
               </button>
             )}
             {open && (

@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { MapPin } from "lucide-react";
 import TrustBadge from "../../profile/components/TrustBadge";
 import { categoryMeta } from "../../../constants";
@@ -10,6 +11,7 @@ function CategoryIcon({ category, size = 32, color = "var(--moss-dark)" }) {
 }
 
 export default function ListingCard({ listing, onClick }) {
+  const { t } = useTranslation();
   return (
     <button onClick={onClick} className="uk-card listing-card">
       <div className="listing-card-image">
@@ -20,7 +22,7 @@ export default function ListingCard({ listing, onClick }) {
         )}
         {listing.status && listing.status !== "active" && (
           <span className={`status-badge status-${listing.status}`} style={{ position: "absolute", top: "0.5rem", left: "0.5rem" }}>
-            {listing.status === "reserved" ? "Reserved" : "Sold"}
+            {listing.status === "reserved" ? t("listingCard.reserved") : t("listingCard.sold")}
           </span>
         )}
       </div>
@@ -30,7 +32,7 @@ export default function ListingCard({ listing, onClick }) {
         <p className="listing-card-meta">
           <MapPin size={11} /> {listing.area}, {listing.city}
           {listing.distanceKm != null && (
-            <span> &middot; {listing.distanceKm < 1 ? "under 1 km" : `${listing.distanceKm.toFixed(1)} km`}</span>
+            <span> &middot; {listing.distanceKm < 1 ? t("listingCard.underOneKm") : `${listing.distanceKm.toFixed(1)} km`}</span>
           )}
         </p>
         {listing.sellerTrust && (
@@ -40,7 +42,7 @@ export default function ListingCard({ listing, onClick }) {
         )}
         <div className="listing-card-footer">
           <span className="listing-card-price">{formatEuro(listing.price_cents)}</span>
-          <span className="pill pill-muted">{listing.condition}</span>
+          <span className="pill pill-muted">{t(`conditions.${listing.condition}`, { defaultValue: listing.condition })}</span>
         </div>
       </div>
     </button>

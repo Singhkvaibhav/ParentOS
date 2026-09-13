@@ -1,5 +1,6 @@
 import { useState, useCallback, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import SearchFilters from "../features/marketplace/components/SearchFilters";
 import ListingGrid from "../features/listings/components/ListingGrid";
 import ListingDetails from "../features/listings/components/ListingDetails";
@@ -11,11 +12,12 @@ import { useFavorites } from "../features/listings/hooks/useFavorites";
 import { useAuth } from "../features/auth/hooks/useAuth";
 
 export default function Marketplace({ showToast }) {
+  const { t } = useTranslation();
   const { user } = useAuth();
   const favorites = useFavorites(!!user);
   const [searchParams, setSearchParams] = useSearchParams();
   const [activeCategory, setActiveCategory] = useState("all");
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(searchParams.get("q") || "");
   const [conditionFilter, setConditionFilter] = useState("all");
   const [maxDistance, setMaxDistance] = useState("any");
   const [selected, setSelected] = useState(null);
@@ -36,12 +38,19 @@ export default function Marketplace({ showToast }) {
   const { listings, total, hasMore, loading, loadingMore, refresh, loadMore } = useListings(filters);
 
   const openSell = useCallback(() => {
-    if (!user) { setAuthView("login"); showToast("Log in to list an item."); return; }
+    if (!user) { setAuthView("login"); showToast(t("marketplace.loginToSell")); return; }
     setShowSellForm(true);
-  }, [user, showToast]);
+  }, [user, showToast, t]);
 
   return (
     <section className="listings-section">
+      <div className="marketplace-intro">
+        <h1 className="uk-display">{t("marketplace.title")}</h1>
+        <p>
+          {t("marketplace.subtitle")}
+        </p>
+      </div>
+
       <SearchFilters
         activeCategory={activeCategory} setActiveCategory={setActiveCategory}
         query={query} setQuery={setQuery}
@@ -52,17 +61,17 @@ export default function Marketplace({ showToast }) {
       />
 
       <div className="flex justify-end mb-4">
-        <button onClick={openSell} className="btn btn-berry">Sell an item</button>
+        <button onClick={openSell} className="btn btn-berry">{t("marketplace.sellAnItem")}</button>
       </div>
 
       <ListingGrid listings={listings} loading={loading} onSelect={setSelected} />
 
       {!loading && listings.length > 0 && (
         <div className="pagination-footer">
-          <p className="small">Showing {listings.length} of {total}</p>
+          <p className="small">{t("marketplace.showingCount", { count: listings.length, total })}</p>
           {hasMore && (
             <button onClick={loadMore} disabled={loadingMore} className="btn btn-outline">
-              {loadingMore ? "Loading..." : "Load more"}
+              {loadingMore ? t("marketplace.loadingMore") : t("marketplace.loadMore")}
             </button>
           )}
         </div>
