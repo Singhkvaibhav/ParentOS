@@ -42,6 +42,10 @@ export function useMarketplaceConfig() {
     // No frontend fallback: conditions are exact strings the backend
     // validates, so guessing them would only produce rejections.
     conditions: raw?.conditions ?? [],
+    // { clothes: [...], accessories: [...], toys: [...] } - raw ids per
+    // category, same "no fallback guessing" reasoning as conditions.
+    // Callers decorate with subcategoryLabel() from constants.js.
+    subcategoriesByCategory: raw?.subcategories ?? {},
     deliveryFeeCents: raw?.deliveryFeeCents ?? null,
     maxPriceCents: raw?.maxPriceCents ?? null,
     limits: raw?.limits ?? null,

@@ -98,6 +98,7 @@
     "editTitle": "Muokkaa ilmoitusta",
     "newTitle": "Lisää ilmoitus",
     "category": "Kategoria",
+    "subcategory": "Alakategoria (valinnainen)",
     "photoLabel": "Kuva (valinnainen)",
     "uploading": "Ladataan...",
     "photoAddedTapReplace": "Kuva lisätty - napauta vaihtaaksesi",
@@ -333,6 +334,36 @@
     "clothes": "Vaatteet",
     "accessories": "Asusteet",
     "toys": "Lelut"
+  },
+  "subcategories": {
+    "clothes": {
+      "baby": "Vauva",
+      "girls": "Tytöt",
+      "boys": "Pojat",
+      "outerwear": "Ulkovaatteet",
+      "tops": "Yläosat",
+      "trousers": "Housut",
+      "dresses": "Mekot",
+      "sleepwear": "Yöasut",
+      "clothing-bundles": "Vaatepaketit"
+    },
+    "accessories": {
+      "shoes": "Kengät",
+      "hats": "Päähineet",
+      "bags": "Laukut",
+      "other-accessories": "Muut asusteet"
+    },
+    "toys": {
+      "baby-toys": "Vauvan lelut",
+      "educational": "Opetukselliset lelut",
+      "games-puzzles": "Pelit ja palapelit",
+      "outdoor-toys": "Ulkoleikkilelut",
+      "soft-toys": "Pehmolelut"
+    }
+  },
+  "categoryMenu": {
+    "trigger": "Kategoriat",
+    "viewAll": "Kaikki: {{category}}"
   },
   "errors": {
     "invalidCredentials": "Väärä sähköposti tai salasana.",

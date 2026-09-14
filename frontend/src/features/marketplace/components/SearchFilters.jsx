@@ -1,10 +1,11 @@
 import { useTranslation } from "react-i18next";
-import { Search, MapPin } from "lucide-react";
-import { CITIES, AREA_DATA } from "../../../constants";
+import { Search, MapPin, X } from "lucide-react";
+import { CITIES, AREA_DATA, subcategoryLabel } from "../../../constants";
 import { useMarketplaceConfig } from "../hooks/useMarketplaceConfig";
+import CategoryMenu from "./CategoryMenu";
 
 export default function SearchFilters({
-  activeCategory, setActiveCategory,
+  activeCategory, subcategoryFilter, onSelectCategory,
   query, setQuery,
   conditionFilter, setConditionFilter,
   refLocation, locating, useMyLocation, setManualArea, clearLocation,
@@ -18,15 +19,26 @@ export default function SearchFilters({
   return (
     <div>
       <div className="pill-row mb-4">
+        <CategoryMenu onSelect={onSelectCategory} />
         {[{ id: "all", label: t("filters.all"), icon: null }, ...categories].map((cat) => {
           const active = activeCategory === cat.id;
           const label = cat.id === "all" ? cat.label : t(`categories.${cat.id}`, { defaultValue: cat.label });
           return (
-            <button key={cat.id} onClick={() => setActiveCategory(cat.id)} className={`pill pill-toggle ${active ? "pill-active" : ""}`}>
+            <button key={cat.id} onClick={() => onSelectCategory(cat.id, null)} className={`pill pill-toggle ${active ? "pill-active" : ""}`}>
               {cat.icon && <cat.icon size={14} />}{label}
             </button>
           );
         })}
+        {subcategoryFilter && subcategoryFilter !== "all" && (
+          <span className="pill pill-active active-subcategory-pill">
+            {t(`subcategories.${activeCategory}.${subcategoryFilter}`, {
+              defaultValue: subcategoryLabel(activeCategory, subcategoryFilter),
+            })}
+            <button type="button" onClick={() => onSelectCategory(activeCategory, null)} aria-label={t("filters.clear")}>
+              <X size={12} />
+            </button>
+          </span>
+        )}
       </div>
 
       <div className="filter-row">

@@ -117,7 +117,7 @@ function signedWebhook(payload) {
       ...process.env,
       NODE_ENV: "development",
       PORT: String(PORT),
-      DATABASE_URL: process.env.E2E_DATABASE_URL || "postgres://postgres:postgres@localhost:5432/parentos_e2e",
+      DATABASE_URL: process.env.E2E_DATABASE_URL || process.env.TEST_DATABASE_URL,
       JWT_SECRET: "e2e-secret-that-is-long-enough-for-the-config-check-0000",
       CORS_ORIGINS: "http://localhost:5173",
       STRIPE_SECRET_KEY: "sk_test_e2e_fake",

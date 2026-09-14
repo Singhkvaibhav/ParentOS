@@ -1,12 +1,19 @@
-import { useMemo } from "react";
-import { Link } from "react-router-dom";
+import { useMemo, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Leaf, MapPin, ShieldCheck, CreditCard } from "lucide-react";
 import { useListings } from "../features/listings/hooks/useListings";
+import { useFavorites } from "../features/listings/hooks/useFavorites";
+import { useAuth } from "../features/auth/hooks/useAuth";
 import ListingCard from "../features/listings/components/ListingCard";
+import AuthModal from "../features/auth/components/AuthModal";
 
 export default function Home() {
   const { t } = useTranslation();
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  const favorites = useFavorites(!!user);
+  const [authView, setAuthView] = useState(null);
   const filters = useMemo(
     () => ({
       category: "all",
@@ -19,6 +26,11 @@ export default function Home() {
   const { listings, loading } = useListings(filters);
 
   const recentListings = listings.slice(0, 4);
+
+  function toggleFavorite(listingId) {
+    if (!user) { setAuthView("login"); return; }
+    favorites.toggle(listingId);
+  }
 
   return (
     <>
@@ -102,7 +114,9 @@ export default function Home() {
               <ListingCard
                 key={item.id}
                 listing={item}
-                onClick={() => {}}
+                onClick={() => navigate(`/listing/${item.id}`)}
+                favorited={favorites.isFavorited(item.id)}
+                onToggleFavorite={() => toggleFavorite(item.id)}
               />
             ))}
           </div>
@@ -122,6 +136,8 @@ export default function Home() {
           </div>
         )}
       </section>
+
+      {authView && <AuthModal initialView={authView} onClose={() => setAuthView(null)} showToast={() => {}} />}
     </>
   );
 }

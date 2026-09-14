@@ -1,5 +1,5 @@
 const express = require("express");
-const { MARKETPLACE, CATEGORIES, CONDITIONS, LIMITS } = require("../config");
+const { MARKETPLACE, CATEGORIES, CONDITIONS, SUBCATEGORIES, LIMITS } = require("../config");
 
 const router = express.Router();
 
@@ -18,6 +18,7 @@ router.get("/config", (req, res) => {
   res.json({
     categories: CATEGORIES,
     conditions: CONDITIONS,
+    subcategories: SUBCATEGORIES,
     deliveryFeeCents: MARKETPLACE.deliveryFeeCents,
     maxPriceCents: MARKETPLACE.maxPriceCents,
     limits: {

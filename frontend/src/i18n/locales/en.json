@@ -98,6 +98,7 @@
     "editTitle": "Edit listing",
     "newTitle": "List an item",
     "category": "Category",
+    "subcategory": "Subcategory (optional)",
     "photoLabel": "Photo (optional)",
     "uploading": "Uploading...",
     "photoAddedTapReplace": "Photo added - tap to replace",
@@ -333,6 +334,36 @@
     "clothes": "Clothes",
     "accessories": "Accessories",
     "toys": "Toys"
+  },
+  "subcategories": {
+    "clothes": {
+      "baby": "Baby",
+      "girls": "Girls",
+      "boys": "Boys",
+      "outerwear": "Outerwear",
+      "tops": "Tops",
+      "trousers": "Trousers",
+      "dresses": "Dresses",
+      "sleepwear": "Sleepwear",
+      "clothing-bundles": "Clothing bundles"
+    },
+    "accessories": {
+      "shoes": "Shoes",
+      "hats": "Hats",
+      "bags": "Bags",
+      "other-accessories": "Other accessories"
+    },
+    "toys": {
+      "baby-toys": "Baby toys",
+      "educational": "Educational",
+      "games-puzzles": "Games & puzzles",
+      "outdoor-toys": "Outdoor toys",
+      "soft-toys": "Soft toys"
+    }
+  },
+  "categoryMenu": {
+    "trigger": "Categories",
+    "viewAll": "View all {{category}}"
   },
   "errors": {
     "invalidCredentials": "Invalid email or password.",

@@ -1,6 +1,6 @@
 const { query, hasPostgis } = require("../db");
 const { findArea, haversineKm } = require("../areaData");
-const { MARKETPLACE, LIMITS, CATEGORY_SET, CONDITION_SET } = require("../config");
+const { MARKETPLACE, LIMITS, CATEGORY_SET, CONDITION_SET, SUBCATEGORY_SETS } = require("../config");
 const { deleteImage } = require("../storage");
 const { summarize } = require("./trustService");
 
@@ -28,7 +28,7 @@ const KM_PER_DEGREE_LAT = 111; // approximate, fine at this precision for a boun
 // Validates the free-form fields shared by create and update. Returns the
 // cleaned values rather than mutating, so callers can't accidentally use
 // the unvalidated originals.
-function validateListingFields({ category, title, priceCents, sizeOrAge, condition, description }, { partial = false } = {}) {
+function validateListingFields({ category, title, priceCents, sizeOrAge, condition, description, subcategory }, { partial = false } = {}) {
   const cleaned = {};
 
   if (category !== undefined) {
@@ -36,6 +36,16 @@ function validateListingFields({ category, title, priceCents, sizeOrAge, conditi
       throw new ListingError(400, `Invalid category - must be one of: ${[...CATEGORY_SET].join(", ")}.`);
     }
     cleaned.category = category;
+  }
+
+  // Cleaned but not yet checked against a category here - which category
+  // this needs to be valid for depends on whether this is a create (where
+  // `category` above is always present) or a partial update that isn't
+  // also changing category (where the caller must check it against the
+  // listing's existing category instead). See assertValidSubcategory and
+  // its call sites in create()/update().
+  if (subcategory !== undefined) {
+    cleaned.subcategory = subcategory === null || subcategory === "" ? null : String(subcategory).trim();
   }
 
   if (title !== undefined) {
@@ -78,6 +88,22 @@ function validateListingFields({ category, title, priceCents, sizeOrAge, conditi
   }
 
   return cleaned;
+}
+
+// Separate from validateListingFields because the category to check
+// against isn't always in the same payload - a partial update that only
+// touches subcategory has to be checked against the listing's *existing*
+// category instead. null/undefined subcategory is always fine (it means
+// "not set" or "explicitly cleared").
+function assertValidSubcategory(category, subcategory) {
+  if (subcategory == null) return;
+  const allowed = SUBCATEGORY_SETS[category];
+  if (!allowed || !allowed.has(subcategory)) {
+    throw new ListingError(
+      400,
+      `Invalid subcategory for '${category}' - must be one of: ${[...(allowed || [])].join(", ")}.`
+    );
+  }
 }
 
 class ListingError extends Error {
@@ -135,7 +161,7 @@ function paginationMeta({ total, limit, offset }) {
 // scoring still isn't pushed into SQL here - the bounding box (backed by
 // idx_listings_latlng) already does the expensive part of narrowing rows
 // before JS ever touches them.
-async function list({ category, condition, q, lat, lng, maxDistance, limit, offset }) {
+async function list({ category, subcategory, condition, q, lat, lng, maxDistance, limit, offset }) {
   const { limit: lim, offset: off } = clampPaging(limit, offset);
 
   // moderated_at IS NULL excludes listings a moderator has taken down -
@@ -144,6 +170,7 @@ async function list({ category, condition, q, lat, lng, maxDistance, limit, offs
   let sql = `${LISTING_SELECT} WHERE listings.status = 'active' AND listings.moderated_at IS NULL`;
   const params = [];
   if (category && category !== "all") { params.push(category); sql += ` AND category = $${params.length}`; }
+  if (subcategory && subcategory !== "all") { params.push(subcategory); sql += ` AND subcategory = $${params.length}`; }
   if (condition && condition !== "all") { params.push(condition); sql += ` AND condition = $${params.length}`; }
 
   // (P2 #16) Full-text search against the indexed search_vector column
@@ -302,17 +329,18 @@ async function mine(sellerId) {
   return rows.map(withSellerTrust);
 }
 
-async function create(sellerId, { category, title, priceCents, sizeOrAge, condition, city, area, description, photoUrl }) {
-  const clean = validateListingFields({ category, title, priceCents, sizeOrAge, condition, description });
+async function create(sellerId, { category, title, priceCents, sizeOrAge, condition, city, area, description, photoUrl, subcategory }) {
+  const clean = validateListingFields({ category, title, priceCents, sizeOrAge, condition, description, subcategory });
+  assertValidSubcategory(clean.category, clean.subcategory);
   if (!city || !area) throw new ListingError(400, "Missing required listing fields.");
   const loc = findArea(city, area);
   if (!loc) throw new ListingError(400, "Unknown city/area combination.");
 
   const { rows } = await query(
-    `INSERT INTO listings (seller_id, category, title, price_cents, size_or_age, condition, city, area, pincode, lat, lng, description, photo_url)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+    `INSERT INTO listings (seller_id, category, subcategory, title, price_cents, size_or_age, condition, city, area, pincode, lat, lng, description, photo_url)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
      RETURNING id`,
-    [sellerId, clean.category, clean.title, clean.priceCents, clean.sizeOrAge || "Not specified", clean.condition, city, loc.area, loc.pincode, loc.lat, loc.lng, clean.description || "No description added.", photoUrl || null]
+    [sellerId, clean.category, clean.subcategory || null, clean.title, clean.priceCents, clean.sizeOrAge || "Not specified", clean.condition, city, loc.area, loc.pincode, loc.lat, loc.lng, clean.description || "No description added.", photoUrl || null]
   );
   return getOne(rows[0].id, sellerId);
 }
@@ -325,17 +353,34 @@ async function requireOwnedListing(id, sellerId) {
   return listing;
 }
 
-async function update(id, sellerId, { category, title, priceCents, sizeOrAge, condition, city, area, description, photoUrl }) {
+async function update(id, sellerId, { category, title, priceCents, sizeOrAge, condition, city, area, description, photoUrl, subcategory }) {
   const listing = await requireOwnedListing(id, sellerId);
   // Same rules as create, but only for the fields actually being changed -
   // an edit shouldn't be able to sneak in a value create would reject.
-  const clean = validateListingFields({ category, title, priceCents, sizeOrAge, condition, description }, { partial: true });
+  const clean = validateListingFields({ category, title, priceCents, sizeOrAge, condition, description, subcategory }, { partial: true });
+
+  if (clean.subcategory !== undefined) {
+    // Checked against the NEW category if this update is also changing
+    // it, otherwise against the listing's existing one - validateListingFields
+    // can't do this itself since a partial update may not include category
+    // at all.
+    assertValidSubcategory(clean.category ?? listing.category, clean.subcategory);
+  }
 
   const fields = [];
   const params = [];
   function set(column, value) { params.push(value); fields.push(`${column} = $${params.length}`); }
 
   if (clean.category !== undefined) set("category", clean.category);
+  if (clean.subcategory !== undefined) {
+    set("subcategory", clean.subcategory);
+  } else if (clean.category !== undefined && listing.subcategory && !SUBCATEGORY_SETS[clean.category]?.has(listing.subcategory)) {
+    // Category changed without an explicit new subcategory, and the old
+    // one doesn't belong to the new category - clear it rather than
+    // letting the DB reject the update outright on the CHECK constraint
+    // (migration 021) with an opaque error the seller didn't cause.
+    set("subcategory", null);
+  }
   if (clean.title !== undefined) set("title", clean.title);
   if (clean.priceCents !== undefined) set("price_cents", clean.priceCents);
   if (clean.sizeOrAge !== undefined) set("size_or_age", clean.sizeOrAge);
