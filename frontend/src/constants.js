@@ -34,6 +34,49 @@ export function categoryMeta(id) {
   );
 }
 
+// Stage 1 of the category redesign (see backend/config.js's SUBCATEGORIES,
+// which is the authoritative list this must stay a presentation layer
+// over - same split as CATEGORY_METADATA above, same reason). Labels only:
+// the subcategory menu doesn't use per-item icons, just the parent
+// category's icon.
+export const SUBCATEGORY_LABELS = {
+  clothes: {
+    baby: "Baby",
+    girls: "Girls",
+    boys: "Boys",
+    outerwear: "Outerwear",
+    tops: "Tops",
+    trousers: "Trousers",
+    dresses: "Dresses",
+    sleepwear: "Sleepwear",
+    "clothing-bundles": "Clothing bundles",
+  },
+  accessories: {
+    shoes: "Shoes",
+    hats: "Hats",
+    bags: "Bags",
+    "other-accessories": "Other accessories",
+  },
+  toys: {
+    "baby-toys": "Baby toys",
+    educational: "Educational",
+    "games-puzzles": "Games & puzzles",
+    "outdoor-toys": "Outdoor toys",
+    "soft-toys": "Soft toys",
+  },
+};
+
+// Graceful default for a subcategory id this map doesn't know about yet,
+// matching categoryMeta's fallback above.
+export function subcategoryLabel(category, id) {
+  return (
+    SUBCATEGORY_LABELS[category]?.[id] ||
+    String(id || "")
+      .replace(/[-_]/g, " ")
+      .replace(/^./, (c) => c.toUpperCase())
+  );
+}
+
 // Kept in sync with backend/areaData.js by hand for now.
 export const AREA_DATA = {
   Helsinki: [

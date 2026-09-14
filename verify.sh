@@ -16,10 +16,21 @@ fail() { echo -e "${RED}FAILED: $1${NC}"; exit 1; }
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 
+# Load local environment when available. CI can provide these variables directly.
+if [[ -f "$ROOT/backend/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  . "$ROOT/backend/.env"
+  set +a
+fi
+
+: "${DATABASE_URL:?DATABASE_URL must be set}"
+: "${TEST_DATABASE_URL:?TEST_DATABASE_URL must be set}"
+
 step "Checking Postgres is reachable"
 # Verification that silently skips the database would be worthless - most
 # of the test suite runs against a real one.
-pg_isready -q || fail "Postgres isn't running. Start it and retry."
+pg_isready -d "$DATABASE_URL" -q || fail "Postgres isn't running. Start it and retry."
 
 step "Installing backend dependencies"
 (cd backend && npm ci --no-audit --no-fund >/dev/null 2>&1 || npm install --no-audit --no-fund >/dev/null) || fail "backend install"
@@ -31,7 +42,7 @@ step "Backend lint"
 (cd backend && npx eslint . --ignore-pattern node_modules --ignore-pattern uploads) || fail "backend lint"
 
 step "Backend tests"
-(cd backend && npm test) || fail "backend tests"
+(cd backend && TEST_DATABASE_URL="$TEST_DATABASE_URL" npm test) || fail "backend tests"
 
 step "Installing frontend dependencies"
 (cd frontend && npm ci --no-audit --no-fund >/dev/null 2>&1 || npm install --no-audit --no-fund >/dev/null) || fail "frontend install"
@@ -47,7 +58,7 @@ step "End-to-end test (real server, real database, real Stripe SDK)"
 # review, and account deletion, with the actual Stripe SDK talking to a
 # local fake. Catches wiring the unit tests cannot, because they mock the
 # stripe module and so never run the SDK at all.
-createdb_out=$(psql "${E2E_ADMIN_URL:-postgres://postgres:postgres@localhost:5432/postgres}" \
+createdb_out=$(psql "${E2E_ADMIN_URL:-$DATABASE_URL}" \
   -c "DROP DATABASE IF EXISTS parentos_e2e;" -c "CREATE DATABASE parentos_e2e;" 2>&1) \
   || fail "could not create the e2e database: $createdb_out"
 (cd "$ROOT/backend" && npm run --silent e2e) || fail "end-to-end test"

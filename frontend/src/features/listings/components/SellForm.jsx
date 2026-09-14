@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { X, Camera } from "lucide-react";
-import { CITIES, AREA_DATA, areaEntry, sizeLabelFor } from "../../../constants";
+import { CITIES, AREA_DATA, areaEntry, sizeLabelFor, subcategoryLabel } from "../../../constants";
 import { useMarketplaceConfig } from "../../marketplace/hooks/useMarketplaceConfig";
 import { compressImage, eurosToCents } from "../../../utils";
 import { listingsService } from "../../../services/listings";
@@ -13,8 +13,9 @@ export default function SellForm({ onClose, onCreated, onUpdated, showToast, edi
   const { t } = useTranslation();
   const { user } = useAuth();
   const isEditing = !!editingListing;
-  const { categories, conditions, loaded: configLoaded, failed: configFailed } = useMarketplaceConfig();
+  const { categories, conditions, subcategoriesByCategory, loaded: configLoaded, failed: configFailed } = useMarketplaceConfig();
   const [category, setCategory] = useState(editingListing?.category || null);
+  const [subcategory, setSubcategory] = useState(editingListing?.subcategory || null);
   const [title, setTitle] = useState(editingListing?.title || "");
   const [price, setPrice] = useState(editingListing ? String((editingListing.price_cents / 100).toFixed(2)) : "");
   const [sizeOrAge, setSizeOrAge] = useState(editingListing?.size_or_age || "");
@@ -67,13 +68,13 @@ export default function SellForm({ onClose, onCreated, onUpdated, showToast, edi
       if (isEditing) {
         const { listing } = await listingsService.update(
           editingListing.id,
-          { category, title: title.trim(), priceCents, sizeOrAge, condition, city, area, description, photoUrl }
+          { category, subcategory, title: title.trim(), priceCents, sizeOrAge, condition, city, area, description, photoUrl }
         );
         onUpdated(listing);
         showToast(t("sellForm.toastUpdated"));
       } else {
         const { listing } = await listingsService.create(
-          { category, title: title.trim(), priceCents, sizeOrAge, condition, city, area, description, photoUrl }
+          { category, subcategory, title: title.trim(), priceCents, sizeOrAge, condition, city, area, description, photoUrl }
         );
         onCreated(listing);
         showToast(t("sellForm.toastPublished"));
@@ -97,11 +98,39 @@ export default function SellForm({ onClose, onCreated, onUpdated, showToast, edi
         <p className="field-label">{t("sellForm.category")}</p>
         <div className="pill-row mb-4">
           {categories.map((c) => (
-            <button key={c.id} onClick={() => setCategory(c.id)} className={`pill pill-toggle ${category === c.id ? "pill-active" : ""}`}>
+            <button
+              key={c.id}
+              onClick={() => {
+                // A subcategory belongs to the category it was picked
+                // under - carrying it across to a different category would
+                // either be meaningless or, once the server validates it,
+                // rejected outright at submit time.
+                if (c.id !== category) setSubcategory(null);
+                setCategory(c.id);
+              }}
+              className={`pill pill-toggle ${category === c.id ? "pill-active" : ""}`}
+            >
               <c.icon size={14} />{t(`categories.${c.id}`, { defaultValue: c.label })}
             </button>
           ))}
         </div>
+
+        {(subcategoriesByCategory[category] || []).length > 0 && (
+          <>
+            <p className="field-label">{t("sellForm.subcategory")}</p>
+            <div className="pill-row mb-4">
+              {subcategoriesByCategory[category].map((id) => (
+                <button
+                  key={id}
+                  onClick={() => setSubcategory(subcategory === id ? null : id)}
+                  className={`pill pill-toggle ${subcategory === id ? "pill-active" : ""}`}
+                >
+                  {t(`subcategories.${category}.${id}`, { defaultValue: subcategoryLabel(category, id) })}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
 
         <div className="form-stack">
           <div>

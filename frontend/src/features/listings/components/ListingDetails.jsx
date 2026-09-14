@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { X, MapPin, MessageCircle, CheckCircle2, Heart, ShoppingBag, Flag } from "lucide-react";
-import { categoryMeta, sizeLabelFor } from "../../../constants";
+import { categoryMeta, sizeLabelFor, subcategoryLabel } from "../../../constants";
 import { formatEuro } from "../../../utils";
 import ChatThread from "../../messaging/components/ChatThread";
 import Checkout from "../../orders/components/Checkout";
@@ -51,6 +51,13 @@ export default function ListingDetails({ listing, onClose, showToast, onRequireL
         <p className="uk-display listing-detail-price">{formatEuro(listing.price_cents)}</p>
 
         <div className="pill-row">
+          {listing.subcategory && (
+            <span className="pill">
+              {t(`subcategories.${listing.category}.${listing.subcategory}`, {
+                defaultValue: subcategoryLabel(listing.category, listing.subcategory),
+              })}
+            </span>
+          )}
           <span className="pill">{t(`sizeLabel.${sizeLabelFor(listing.category)}`)}: {listing.size_or_age || listing.sizeOrAge}</span>
           <span className="pill">{t(`conditions.${listing.condition}`, { defaultValue: listing.condition })}</span>
           <span className="pill"><MapPin size={12} /> {listing.area}, {listing.city} &middot; {listing.pincode}</span>

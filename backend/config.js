@@ -33,6 +33,22 @@ const MARKETPLACE = {
 const CATEGORIES = ["clothes", "accessories", "toys"];
 const CONDITIONS = ["New with tags", "Like new", "Good", "Well loved"];
 
+// Stage 1 of the category redesign: a second level under each of the
+// three categories the backend already understands, rather than a wider
+// top-level taxonomy (Baby gear, Furniture, Feeding, ...) the rest of the
+// system - validation, search, the sell form - has no concept of yet.
+// Building the fuller menu against categories that don't exist as data
+// would let the UI offer combinations the API would just reject.
+//
+// Optional on a listing (see migration 021): a seller can publish without
+// picking one, so this is additive rather than a new required field on
+// every existing flow and test.
+const SUBCATEGORIES = {
+  clothes: ["baby", "girls", "boys", "outerwear", "tops", "trousers", "dresses", "sleepwear", "clothing-bundles"],
+  accessories: ["shoes", "hats", "bags", "other-accessories"],
+  toys: ["baby-toys", "educational", "games-puzzles", "outdoor-toys", "soft-toys"],
+};
+
 // CORS origins, resolved in ONE place.
 //
 // This was previously split: server.js read ALLOWED_ORIGINS while
@@ -92,9 +108,15 @@ module.exports = {
   MARKETPLACE,
   CATEGORIES,
   CONDITIONS,
+  SUBCATEGORIES,
   LIMITS,
   // Sets are what the validators actually want; build them once here
   // rather than in each caller.
   CATEGORY_SET: new Set(CATEGORIES),
   CONDITION_SET: new Set(CONDITIONS),
+  // One Set per category, so validating "is this subcategory valid for
+  // this category" is a single lookup rather than re-scanning an array.
+  SUBCATEGORY_SETS: Object.fromEntries(
+    Object.entries(SUBCATEGORIES).map(([category, subs]) => [category, new Set(subs)])
+  ),
 };

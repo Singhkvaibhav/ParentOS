@@ -17,6 +17,7 @@ export default function Marketplace({ showToast }) {
   const favorites = useFavorites(!!user);
   const [searchParams, setSearchParams] = useSearchParams();
   const [activeCategory, setActiveCategory] = useState("all");
+  const [subcategoryFilter, setSubcategoryFilter] = useState("all");
   const [query, setQuery] = useState(searchParams.get("q") || "");
   const [conditionFilter, setConditionFilter] = useState("all");
   const [maxDistance, setMaxDistance] = useState("any");
@@ -28,12 +29,13 @@ export default function Marketplace({ showToast }) {
 
   const filters = useMemo(() => ({
     category: activeCategory,
+    subcategory: subcategoryFilter,
     condition: conditionFilter,
     q: query,
     lat: refLocation?.lat,
     lng: refLocation?.lng,
     maxDistance: refLocation ? maxDistance : undefined,
-  }), [activeCategory, conditionFilter, query, refLocation, maxDistance]);
+  }), [activeCategory, subcategoryFilter, conditionFilter, query, refLocation, maxDistance]);
 
   const { listings, total, hasMore, loading, loadingMore, refresh, loadMore } = useListings(filters);
 
@@ -41,6 +43,22 @@ export default function Marketplace({ showToast }) {
     if (!user) { setAuthView("login"); showToast(t("marketplace.loginToSell")); return; }
     setShowSellForm(true);
   }, [user, showToast, t]);
+
+  // Single entry point for both the quick category pills and the
+  // CategoryMenu flyout, so picking a plain category (no subcategory)
+  // always clears any subcategory left over from a previous selection -
+  // otherwise switching from "Clothes > Baby" straight to "Toys" would
+  // silently keep filtering on a subcategory that belongs to the wrong
+  // category and return zero results with no visible reason why.
+  const selectCategory = useCallback((category, subcategory) => {
+    setActiveCategory(category);
+    setSubcategoryFilter(subcategory || "all");
+  }, []);
+
+  const toggleFavorite = useCallback((listingId) => {
+    if (!user) { setAuthView("login"); return; }
+    favorites.toggle(listingId);
+  }, [user, favorites]);
 
   return (
     <section className="listings-section">
@@ -52,7 +70,7 @@ export default function Marketplace({ showToast }) {
       </div>
 
       <SearchFilters
-        activeCategory={activeCategory} setActiveCategory={setActiveCategory}
+        activeCategory={activeCategory} subcategoryFilter={subcategoryFilter} onSelectCategory={selectCategory}
         query={query} setQuery={setQuery}
         conditionFilter={conditionFilter} setConditionFilter={setConditionFilter}
         refLocation={refLocation} locating={locating} useMyLocation={useMyLocation}
@@ -64,7 +82,10 @@ export default function Marketplace({ showToast }) {
         <button onClick={openSell} className="btn btn-berry">{t("marketplace.sellAnItem")}</button>
       </div>
 
-      <ListingGrid listings={listings} loading={loading} onSelect={setSelected} />
+      <ListingGrid
+        listings={listings} loading={loading} onSelect={setSelected}
+        isFavorited={favorites.isFavorited} onToggleFavorite={toggleFavorite}
+      />
 
       {!loading && listings.length > 0 && (
         <div className="pagination-footer">

@@ -1,0 +1,11 @@
+services:
+  api:
+    ports:
+      - "4000:4000"
+    environment:
+      CORS_ORIGINS: http://localhost:5173
+      FRONTEND_URL: http://localhost:5173
+
+  postgres:
+    ports:
+      - "5432:5432"
