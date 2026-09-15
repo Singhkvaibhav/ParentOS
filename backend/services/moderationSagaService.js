@@ -158,14 +158,27 @@ async function drainTasks({ actionId = null, limit = 50 } = {}) {
   // Joined so the audit trail can attribute the refund to the moderator who
   // ordered it, rather than to nobody.
   const { rows: tasks } = await query(
-    `SELECT t.*, a.admin_id, a.reason
-     FROM moderation_refund_tasks t
-     JOIN moderation_actions a ON a.id = t.moderation_action_id
-     WHERE t.state = 'pending' AND t.attempts < $1
-       ${actionId ? "AND t.moderation_action_id = $3" : ""}
-     ORDER BY t.created_at ASC
-     LIMIT $2
-     FOR UPDATE OF t SKIP LOCKED`,
+    `WITH claimed AS (
+       UPDATE moderation_refund_tasks t
+       SET state = 'processing',
+           attempts = attempts + 1,
+           started_at = now()
+       WHERE t.id IN (
+         SELECT t2.id
+         FROM moderation_refund_tasks t2
+         WHERE t2.state = 'pending'
+           AND t2.attempts < $1
+           ${actionId ? "AND t2.moderation_action_id = $3" : ""}
+         ORDER BY t2.created_at ASC
+         LIMIT $2
+         FOR UPDATE OF t2 SKIP LOCKED
+       )
+       RETURNING t.*
+     )
+     SELECT c.*, a.admin_id, a.reason
+     FROM claimed c
+     JOIN moderation_actions a ON a.id = c.moderation_action_id
+     ORDER BY c.created_at ASC`,
     actionId ? [MAX_ATTEMPTS, limit, actionId] : [MAX_ATTEMPTS, limit]
   );
 
@@ -173,8 +186,6 @@ async function drainTasks({ actionId = null, limit = 50 } = {}) {
   let failed = 0;
 
   for (const task of tasks) {
-    await query("UPDATE moderation_refund_tasks SET attempts = attempts + 1 WHERE id = $1", [task.id]);
-
     try {
       const result = await executeTask(task, stripe);
       await query(
@@ -197,7 +208,7 @@ async function drainTasks({ actionId = null, limit = 50 } = {}) {
       }
     } catch (e) {
       failed += 1;
-      const exhausted = task.attempts + 1 >= MAX_ATTEMPTS;
+      const exhausted = task.attempts >= MAX_ATTEMPTS;
       await query(
         `UPDATE moderation_refund_tasks
          SET state = $1, last_error = $2, completed_at = CASE WHEN $1 = 'failed' THEN now() ELSE NULL END
@@ -206,7 +217,7 @@ async function drainTasks({ actionId = null, limit = 50 } = {}) {
       );
       logger.error("moderation_refund_task_failed", {
         taskId: task.id, transactionId: task.transaction_id,
-        attempts: task.attempts + 1, exhausted, err: e,
+        attempts: task.attempts, exhausted, err: e,
       });
     }
   }
