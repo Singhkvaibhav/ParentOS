@@ -87,6 +87,38 @@ describe("checkout + webhook", () => {
     expect(check.body.listing.status).toBe("active");
   });
 
+  test("checkout is refused when seller charges are enabled but payouts are disabled", async () => {
+    const seller = await createVerifiedUser(app, {
+      email: "nopayoutsenabled@example.com",
+    });
+    const buyer = await createVerifiedUser(app, {
+      email: "nopayoutbuyer2@example.com",
+    });
+
+    const listing = await createListing(seller.agent);
+
+    // Seller has a Connect account and can accept charges, but Stripe
+    // has not enabled payouts yet.
+    await query(
+      "UPDATE users SET connect_payouts_enabled = false WHERE id = $1",
+      [seller.user.id]
+    );
+
+    const res = await buyer.agent
+      .post("/api/transactions/checkout")
+      .send({ listingId: listing.id });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/payouts/i);
+
+    // Checkout must fail before Stripe creates a PaymentIntent and before
+    // the listing is reserved.
+    expect(mockPaymentIntentsCreate).not.toHaveBeenCalled();
+
+    const check = await request(app).get(`/api/listings/${listing.id}`);
+    expect(check.body.listing.status).toBe("active");
+  });
+
   test("commission and totals are exact integer cents, not float-rounded", async () => {
     const seller = await createVerifiedUser(app, { email: "centsseller@example.com" });
     const buyer = await createVerifiedUser(app, { email: "centsbuyer@example.com" });

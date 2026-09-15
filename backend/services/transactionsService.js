@@ -49,11 +49,15 @@ async function checkout(buyerId, { listingId: listingIdInput, deliveryMethod }) 
   // sale. Refusing up front is the honest behaviour: the buyer isn't
   // charged, and the seller gets a clear reason to finish onboarding.
   const { rows: sellerRows } = await query(
-    "SELECT stripe_connect_account_id, connect_charges_enabled FROM users WHERE id = $1",
+    "SELECT stripe_connect_account_id, connect_charges_enabled, connect_payouts_enabled FROM users WHERE id = $1",
     [listing.seller_id]
   );
   const seller = sellerRows[0];
-  if (!seller?.stripe_connect_account_id || !seller.connect_charges_enabled) {
+  if (
+    !seller?.stripe_connect_account_id ||
+    !seller.connect_charges_enabled ||
+    !seller.connect_payouts_enabled
+  ) {
     throw new TransactionError(409, "This seller hasn't finished setting up payouts yet, so this item can't be bought right now.");
   }
 
