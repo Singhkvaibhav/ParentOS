@@ -18,16 +18,19 @@ require("../tests/setupEnv");
 // test just means a dangling timer that keeps the process alive and jest
 // from exiting. What's worth locking in here is the selection logic itself
 // (falls back correctly when unconfigured; wires up the right shape, with
-// a distinct prefix per limiter, when configured) - an actual Redis
-// round-trip is exactly the kind of environment-dependent behaviour this
-// suite skips in NODE_ENV=test already (see rateLimit.js's skipInTests),
-// same as the rest of this module's limiters.
-// RedisStore's constructor fires two fire-and-forget SCRIPT LOAD commands
-// to warm its Lua scripts (see loadIncrementScript/loadGetScript in
-// rate-limit-redis) - `call` has to resolve to a string, or that unawaited
-// promise rejects with "unexpected reply from redis client" and jest
-// reports it as an unhandled rejection even though every assertion below
-// still passes.
+// a distinct prefix per limiter, when configured) plus the specific
+// ioredis option combination that once broke every real boot (see the last
+// test below) - an actual Redis round-trip is exactly the kind of
+// environment-dependent behaviour this suite skips in NODE_ENV=test
+// already (see rateLimit.js's skipInTests), same as the rest of this
+// module's limiters, and exactly why the bug below shipped past this file
+// once already - it was only ever caught by the `compose` CI job actually
+// booting the app with REDIS_URL set.
+//
+// `call` has to resolve to a string, or RedisStore's unawaited
+// SCRIPT LOAD promise rejects with "unexpected reply from redis client"
+// and jest reports it as an unhandled rejection even though every
+// assertion below still passes.
 jest.mock("ioredis", () => jest.fn().mockImplementation(() => ({
   on: jest.fn(),
   call: jest.fn().mockResolvedValue("fake-script-sha"),
@@ -92,5 +95,30 @@ describe("rate limiting: Redis store selection", () => {
     storeFor("ai-ip");
 
     expect(Redis).toHaveBeenCalledTimes(1);
+  });
+
+  // Regression test for a real bug this file's mocking missed the first
+  // time: RedisStore's constructor fires its SCRIPT LOAD warm-up commands
+  // immediately, before a lazyConnect'd client has actually connected.
+  // enableOfflineQueue: false makes ioredis reject any command issued
+  // before the connection is ready instead of queueing it - so pairing it
+  // with lazyConnect meant every single boot with REDIS_URL set crashed
+  // with an unhandled rejection ("Stream isn't writeable and
+  // enableOfflineQueue options is false"), 100% reproducibly. Confirmed
+  // fixed by actually booting the app against a real Redis (`docker
+  // compose ... up api` with REDIS_URL set) - this assertion exists so the
+  // specific option combination that caused it can't quietly come back.
+  test("the Redis client never disables the offline queue - lazyConnect needs it to survive the first command", () => {
+    process.env.REDIS_URL = "redis://fake-redis-host:6379";
+    jest.resetModules();
+    const { storeFor } = require("../middleware/rateLimit");
+    const Redis = require("ioredis");
+
+    storeFor("login");
+
+    expect(Redis).toHaveBeenCalledTimes(1);
+    const [, options] = Redis.mock.calls[0];
+    expect(options.lazyConnect).toBe(true);
+    expect(options.enableOfflineQueue).not.toBe(false);
   });
 });
