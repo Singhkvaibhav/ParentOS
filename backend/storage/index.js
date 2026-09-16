@@ -70,20 +70,20 @@ async function saveImage(dataUrl) {
   return saveBuffer(buffer, ext, mimeType);
 }
 
-// Deletes a previously-stored image given the URL that saveBuffer
-// returned. Best-effort by design: a failure here is logged but never
-// thrown, because an orphaned file is a housekeeping problem, not a reason
-// to fail the user's actual request (deleting their listing, replacing
-// their photo). Returns whether it succeeded, mostly so tests can assert.
+// Deletes an object given its raw storage key ("listings/<uuid>.jpg",
+// "quarantine/<uuid>.upload"). Use this whenever the caller already has the
+// key - a quarantine key is not a URL and was never issued as one, so
+// routing it through deleteImage()'s URL-parsing would just fail to match
+// and silently no-op (this is exactly what happened before: quarantine
+// cleanup calls passed a raw key to a function that only knew how to pull
+// keys back out of "listings/..." URLs).
 //
-// Silently ignores URLs that don't look like ones we issued - an
-// externally-hosted photo_url (or a malformed one) must never cause us to
-// attempt a delete against an arbitrary path.
-async function deleteImage(url) {
-  if (!url || typeof url !== "string") return false;
-
-  const key = extractKey(url);
-  if (!key) return false;
+// Best-effort by design: a failure here is logged but never thrown, because
+// an orphaned file is a housekeeping problem, not a reason to fail the
+// user's actual request. Returns whether it succeeded, mostly so tests can
+// assert.
+async function deleteObject(key) {
+  if (!key || typeof key !== "string") return false;
 
   try {
     if (USE_S3) {
@@ -101,17 +101,32 @@ async function deleteImage(url) {
     } else {
       const filePath = path.resolve(__dirname, "../uploads", key);
       // Guard against a crafted key escaping the uploads directory - the
-      // key comes from a stored URL, but defense in depth on a filesystem
-      // delete is cheap insurance.
+      // key comes from a stored URL or DB row, but defense in depth on a
+      // filesystem delete is cheap insurance.
       const uploadsRoot = path.resolve(__dirname, "../uploads");
       if (!filePath.startsWith(uploadsRoot + path.sep)) return false;
       await fs.promises.unlink(filePath);
     }
     return true;
   } catch (e) {
-    if (e.code !== "ENOENT") logger.warn("image_delete_failed", { key, err: e });
+    if (e.code !== "ENOENT") logger.warn("object_delete_failed", { key, err: e });
     return false;
   }
+}
+
+// Deletes a previously-stored image given the PUBLIC URL that saveBuffer /
+// writeObject returned - not a raw storage key (see deleteObject for that).
+//
+// Silently ignores URLs that don't look like ones we issued - an
+// externally-hosted photo_url (or a malformed one) must never cause us to
+// attempt a delete against an arbitrary path.
+async function deleteImage(url) {
+  if (!url || typeof url !== "string") return false;
+
+  const key = extractKey(url);
+  if (!key) return false;
+
+  return deleteObject(key);
 }
 
 // Pulls the storage key ("listings/<uuid>.jpg") back out of a URL we
@@ -210,4 +225,4 @@ module.exports = {
   readObject,
   writeObject,
   QUARANTINE_PREFIX,
-  PUBLIC_PREFIX, saveImage, saveBuffer, parseDataUrl, deleteImage, usingS3: USE_S3 };
+  PUBLIC_PREFIX, saveImage, saveBuffer, parseDataUrl, deleteImage, deleteObject, usingS3: USE_S3 };

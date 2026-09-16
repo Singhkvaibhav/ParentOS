@@ -1,6 +1,6 @@
 const sharp = require("sharp");
 const {
-  readObject, writeObject, deleteImage,
+  readObject, writeObject, deleteObject,
   PUBLIC_PREFIX,
 } = require("../storage");
 const { isEnabled: queuesEnabled, enqueue, QUEUE_NAMES } = require("../queue");
@@ -45,12 +45,12 @@ async function processQuarantinedImage(quarantineKey) {
   } catch {
     // Not a real image. Remove it rather than leaving unvalidated bytes
     // sitting in the bucket.
-    await deleteImage(quarantineKey).catch(() => {});
+    await deleteObject(quarantineKey).catch(() => {});
     throw new ImageProcessingError(400, "That doesn't look like a valid image.", "notAnImage");
   }
 
   if (processed.length > MAX_OUTPUT_BYTES) {
-    await deleteImage(quarantineKey).catch(() => {});
+    await deleteObject(quarantineKey).catch(() => {});
     throw new ImageProcessingError(400, "Image is still too large after resizing.", "imageStillTooLarge");
   }
 
@@ -73,7 +73,7 @@ async function processQuarantinedImage(quarantineKey) {
 
   // The quarantine copy still holds the original EXIF, so it must not be
   // left behind.
-  await deleteImage(quarantineKey).catch((e) =>
+  await deleteObject(quarantineKey).catch((e) =>
     logger.warn("quarantine_cleanup_failed", { quarantineKey, err: e })
   );
 
@@ -85,9 +85,14 @@ async function processQuarantinedImage(quarantineKey) {
 // hold the response open, but processes inline when there's no queue -
 // returning an unprocessed image would mean serving un-stripped EXIF,
 // which is never an acceptable fallback.
-async function processUpload(quarantineKey, { requestId } = {}) {
+//
+// `uploadId` travels with the job so the worker can finish the state
+// transition itself (uploaded -> processed/failed, see worker.js) - the
+// HTTP response returns before that happens, so the request handler can no
+// longer be the one to call markProcessed/markFailed once this is queued.
+async function processUpload(quarantineKey, { requestId, uploadId } = {}) {
   if (queuesEnabled()) {
-    const queued = await enqueue(QUEUE_NAMES.IMAGE_PROCESSING, "process", { quarantineKey, requestId });
+    const queued = await enqueue(QUEUE_NAMES.IMAGE_PROCESSING, "process", { quarantineKey, requestId, uploadId });
     if (queued) return { queued: true };
     logger.warn("image_processing_queue_unavailable_running_inline", { quarantineKey });
   }

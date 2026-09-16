@@ -1,3 +1,4 @@
+import * as SecureStore from 'expo-secure-store';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { auth as authApi } from '../api/endpoints';
@@ -5,7 +6,31 @@ import { registerTokenListener, setTokens, getTokens, type Tokens } from '../api
 import { registerForPushNotifications, unregisterPushNotifications } from '../notifications';
 import type { User } from '../api/types';
 
+// The refresh token is a long-lived bearer credential - anyone holding it
+// can mint fresh access tokens indefinitely, so it belongs in OS-backed
+// secure storage (iOS Keychain / Android Keystore-backed encryption), not
+// AsyncStorage's plain unencrypted file. expo-secure-store is the same
+// async get/set/remove shape, so this is a storage swap, not an auth
+// redesign - the refresh logic itself (the shared in-flight refresh promise
+// in api/client.ts) is unaffected.
 const STORAGE_KEY = 'uusiki.auth.v1';
+// Old, pre-SecureStore key. Only read once, to migrate anyone who already
+// has a session on-device from before this change, then never written
+// again - a version bump instead would just silently sign everyone out on
+// the next app update.
+const LEGACY_ASYNC_STORAGE_KEY = 'uusiki.auth.v1';
+
+async function readStoredSession(): Promise<string | null> {
+  const current = await SecureStore.getItemAsync(STORAGE_KEY);
+  if (current) return current;
+
+  const legacy = await AsyncStorage.getItem(LEGACY_ASYNC_STORAGE_KEY);
+  if (legacy) {
+    await SecureStore.setItemAsync(STORAGE_KEY, legacy);
+    await AsyncStorage.removeItem(LEGACY_ASYNC_STORAGE_KEY);
+  }
+  return legacy;
+}
 
 type Session = { user: User; accessToken: string; refreshToken: string };
 
@@ -32,8 +57,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // including ones it rotated to on our behalf after a 401.
   useEffect(() => {
     registerTokenListener((tokens) => {
-      if (tokens) AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(tokens));
-      else AsyncStorage.removeItem(STORAGE_KEY);
+      if (tokens) SecureStore.setItemAsync(STORAGE_KEY, JSON.stringify(tokens));
+      else SecureStore.deleteItemAsync(STORAGE_KEY);
     });
   }, []);
 
@@ -42,7 +67,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     (async () => {
       try {
-        const raw = await AsyncStorage.getItem(STORAGE_KEY);
+        const raw = await readStoredSession();
         if (raw) {
           const tokens: Tokens = JSON.parse(raw);
           setTokens(tokens);
@@ -65,7 +90,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const applySession = async ({ user: sessionUser, accessToken, refreshToken }: Session) => {
     setTokens({ accessToken, refreshToken });
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify({ accessToken, refreshToken }));
+    await SecureStore.setItemAsync(STORAGE_KEY, JSON.stringify({ accessToken, refreshToken }));
     setUser(sessionUser);
     registerForPushNotifications();
   };
@@ -92,7 +117,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     }
     setTokens(null);
-    await AsyncStorage.removeItem(STORAGE_KEY);
+    await SecureStore.deleteItemAsync(STORAGE_KEY);
     setUser(null);
   };
 

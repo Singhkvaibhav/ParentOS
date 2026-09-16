@@ -99,7 +99,7 @@ async function markFailed(uploadId, message) {
 // orphaned objects with nothing recording they existed, so they could
 // never be found again to clean up.
 async function sweepAbandoned() {
-  const { deleteImage } = require("../storage");
+  const { deleteObject } = require("../storage");
   const { rows } = await query(
     `SELECT id, storage_key FROM uploads
      WHERE status IN ('pending', 'uploaded') AND expires_at < now()
@@ -108,8 +108,11 @@ async function sweepAbandoned() {
 
   for (const upload of rows) {
     // Best-effort: the object may never have been written at all, which is
-    // the common case for an abandoned presign.
-    await deleteImage(upload.storage_key).catch(() => {});
+    // the common case for an abandoned presign. storage_key is a raw
+    // "quarantine/<uuid>.upload" key, not a public URL - deleteImage()
+    // only knows how to extract keys from "listings/..." URLs, so it would
+    // silently no-op here (see storage/index.js's deleteObject for why).
+    await deleteObject(upload.storage_key).catch(() => {});
     await query("UPDATE uploads SET status = 'failed', error = 'abandoned', completed_at = now() WHERE id = $1", [upload.id]);
   }
 

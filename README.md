@@ -2,11 +2,14 @@
 
 A curated second-hand marketplace for Finnish families, built as a real,
 runnable app: React frontend, Express backend, PostgreSQL database, Stripe
-Connect for payments and payouts.
+Connect for payments and payouts, and a React Native (Expo) mobile app - all
+three clients (web, mobile, and the backend itself) share the same versioned
+API, `/api/v1`.
 
 ## Stack
 
 - **Frontend** - React + Vite
+- **Mobile** - React Native (Expo) - see [mobile/README.md](mobile/README.md)
 - **Backend** - Node + Express, layered `routes → services → PostgreSQL`
 - **Database** - PostgreSQL (+ PostGIS for geosearch, optional)
 - **Queue** - BullMQ + Redis (optional; falls back to in-process)
@@ -62,6 +65,8 @@ backend/
 database/
   migrations/   one numbered file per schema change, never edited after landing
   seed.sql      demo data (dev only, never run in tests)
+
+mobile/         React Native (Expo) app - same backend, /api/v1
 ```
 
 ## Docs

@@ -29,7 +29,8 @@
           "merchantIdentifier": "merchant.fi.uusiki.app",
           "enableGooglePay": true
         }
-      ]
+      ],
+      "expo-secure-store"
     ]
   }
 }

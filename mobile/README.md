@@ -1,12 +1,20 @@
 # Uusiki mobile app
 
-A React Native (Expo) app implementing the same screens as the
-[Uusiki design canvas](../claude/uusiki-web-app-linking-plan.md), talking to
-the **real ParentOS/Uusiksi backend** — the same Postgres-backed API the
-production web frontend uses. That backend lives in a separate repo/checkout
-(`Documents/parentos/backend`), **not** in [`backend/`](../backend) in this
-repo — this repo's own `backend/` is an earlier, bespoke SQLite backend that
-this app no longer talks to (see "About `backend/` in this repo" below).
+A React Native (Expo) app implementing the Uusiki marketplace screens,
+talking to the **same backend and database as the web frontend** — this is
+one repo now:
+
+```
+ParentOS/
+├── backend/    Express + PostgreSQL API
+├── frontend/   React + Vite web app
+└── mobile/     this app
+```
+
+All three clients talk to the same versioned backend API, `/api/v1` (see
+`backend/config.js`'s `API_PREFIX`) — mobile through Bearer-token routes
+under `/api/v1/auth/mobile/*`, the web frontend through the same routes
+using an httpOnly cookie instead, since a native app has no cookie jar.
 Sign in on the app and the account, listings, orders and messages are the
 actual rows in that backend's database, not sample data.
 
@@ -24,17 +32,18 @@ actual rows in that backend's database, not sample data.
   landing), Account (email verification status, Stripe Connect payout
   setup).
 - **Navigation**: two tab shells — Uusiki (Browse/Search/Sell/Chat/Orders)
-  and ParentOS (Home/Account) — matching the two-shell concept in the design
-  canvas, switchable via the "← ParentOS" link in the Uusiki tabs and the
-  "Open Uusiki" card on Home.
-- **Auth**: Bearer JWT access + refresh tokens persisted in `AsyncStorage`,
-  with automatic refresh-and-retry on a 401 (see `src/api/client.ts`). This
-  hits dedicated `/api/v1/auth/mobile/*` routes on the backend — same
-  signup/login/verify/reset logic as the web app, just returning tokens in
-  the JSON body instead of an httpOnly cookie, since a native app has no
-  cookie jar.
-- **Design tokens**: `src/theme.ts` mirrors the canvas's colors, Archivo
-  font weights, and sharp (0-radius) styling exactly.
+  and ParentOS (Home/Account) — switchable via the "← ParentOS" link in the
+  Uusiki tabs and the "Open Uusiki" card on Home.
+- **Auth**: Bearer JWT access + refresh tokens, with automatic refresh-and-retry
+  on a 401 via a single shared in-flight refresh promise (see
+  `src/api/client.ts`) — concurrent 401s share one refresh call instead of
+  each racing to rotate the same refresh token. The token pair itself is
+  persisted in `expo-secure-store` (iOS Keychain / Android Keystore-backed
+  encryption), not plain `AsyncStorage` — a refresh token is a long-lived
+  credential, so it gets OS-backed storage rather than an unencrypted file
+  (see `src/state/AuthContext.tsx`).
+- **Design tokens**: `src/theme.ts` mirrors the design canvas's colors,
+  Archivo font weights, and sharp (0-radius) styling.
 - **Payments**: `@stripe/stripe-react-native`'s PaymentSheet, initialized
   lazily with the `publishableKey` the checkout response returns (same
   pattern as the web frontend's `Checkout.jsx`) rather than at app start,
@@ -75,23 +84,14 @@ actual rows in that backend's database, not sample data.
   cards for app-created listings show a placeholder even though the backend
   does support `photo_url` (existing listings created with one, e.g. via the
   web, render it correctly).
-- Push notifications and deep linking.
-
-## About `backend/` in this repo
-
-This repo still contains the original bespoke SQLite backend under
-`backend/`. It's unused now — kept only because deleting it wasn't part of
-this change — and it is **not** what running instructions below start.
-Nothing here still points at it.
 
 ## Running it
 
-1. Start the real backend first — this is `Documents/parentos/backend`, a
-   different checkout from this repo (see `backend/README.md` there for full
-   setup: it needs Postgres/PostGIS running, e.g. via its `docker-compose`):
+1. Start the backend (see [`../backend`](../backend) — needs Postgres/PostGIS
+   running, e.g. via its `docker-compose`):
 
    ```bash
-   cd path/to/Documents/parentos/backend
+   cd ../backend
    npm install
    npm run migrate
    psql "$DATABASE_URL" -f database/seed.sql   # seeds one demo account + listings
@@ -111,8 +111,8 @@ Nothing here still points at it.
    that one action will fail there. Every other screen works fine under it.
 
 3. `EXPO_PUBLIC_API_BASE_URL` depends on where the app runs relative to the
-   backend, and must include the versioned `/api/v1` prefix (see backend/
-   config.js's `API_PREFIX`):
+   backend, and must include the versioned `/api/v1` prefix (see
+   `../backend/config.js`'s `API_PREFIX`):
    - iOS simulator on the same Mac as the backend → leave it unset
      (defaults to `http://localhost:4000/api/v1`).
    - Android emulator → `http://10.0.2.2:4000/api/v1` (the emulator's alias
@@ -130,12 +130,16 @@ Nothing here still points at it.
 
 ## Verifying it builds
 
-No simulator is available in every environment, so the two checks below
-confirm the app is sound without one:
+CI (`.github/workflows/ci.yml`, `mobile` job) runs these on every push:
 
 ```bash
-npx tsc --noEmit                          # type-check
-npx expo export --platform ios            # bundles with Metro, no device needed
+npx tsc --noEmit          # type-check
+npm test -- --runInBand   # Jest (jest-expo preset) — notification routing,
+                           # token-refresh dedup logic
 ```
 
-Both pass as of this commit.
+Locally, a bundle check with no simulator needed:
+
+```bash
+npx expo export --platform ios
+```

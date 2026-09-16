@@ -1,18 +1,15 @@
-// Thin fetch wrapper around the REAL ParentOS/Uusiksi backend
-// (Documents/parentos/backend) - the same API the web frontend talks to.
-// One client, used by every screen — this IS the "website and app are both
-// just clients on top of the same API" idea from the linking plan, now
-// actually true rather than aspirational (this used to point at a bespoke
-// SQLite backend that lived in this repo).
+// Thin fetch wrapper around the ParentOS/Uusiksi backend (../backend) - the
+// same API the web frontend talks to. One client, used by every screen —
+// "website and app are both just clients on top of the same API".
 //
 // Base URL: set EXPO_PUBLIC_API_BASE_URL in .env (see .env.example). Defaults
-// to localhost on the backend's default port (see Documents/parentos/backend/
-// server.js) with its versioned /api/v1 prefix (backend/config.js's
-// API_PREFIX) - an installed app can't all update the moment the backend
-// does, so it talks to a specific version rather than "whatever /api
-// currently means". Works in the iOS simulator as-is; on a physical device
-// or Android emulator you MUST set this to your machine's LAN IP (Android
-// emulator: http://10.0.2.2:4000/api/v1).
+// to localhost on the backend's default port (see ../backend/server.js)
+// with its versioned /api/v1 prefix (../backend/config.js's API_PREFIX) -
+// an installed app can't all update the moment the backend does, so it
+// talks to a specific version rather than "whatever /api currently means".
+// Works in the iOS simulator as-is; on a physical device or Android
+// emulator you MUST set this to your machine's LAN IP (Android emulator:
+// http://10.0.2.2:4000/api/v1).
 const BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || 'http://localhost:4000/api/v1';
 
 export type Tokens = { accessToken: string; refreshToken: string };
@@ -34,8 +31,8 @@ export function getTokens(): Tokens | null {
 }
 
 // `code` is the backend's stable machine-readable error identifier (see
-// Documents/parentos/backend's XError classes) - `message` is the
-// human-readable English fallback. Screens should branch on `code` when
+// ../backend's XError classes) - `message` is the human-readable English
+// fallback. Screens should branch on `code` when
 // they need to (e.g. distinguishing "wrong password" from "account
 // locked"), the same way the web frontend's translateServerError does.
 class ApiError extends Error {

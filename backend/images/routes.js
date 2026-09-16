@@ -120,7 +120,10 @@ router.post("/finalize", requireAuth, express.json(), async (req, res) => {
   }
 
   try {
-    const result = await processUpload(upload.storage_key, { requestId: req.id });
+    const result = await processUpload(upload.storage_key, { requestId: req.id, uploadId: upload.id });
+    // When queued, the worker owns the uploaded -> processed/failed
+    // transition (see worker.js) - the response returns before that
+    // happens, so there's no result.key here yet to mark processed with.
     if (result.key) await markProcessed(upload.id, { publicKey: result.key, publicUrl: result.url, publicThumbUrl: result.thumbUrl });
     res.json(result);
   } catch (e) {

@@ -140,9 +140,13 @@ isn't optional.
 docker compose up -d --scale api=3
 ```
 
-Before doing this, note the rate limits use an in-memory store, so N
-instances means N times the configured limit. Redis is already a
-dependency; wiring `rate-limit-redis` is the remaining step.
+Rate limits are backed by Redis (`rate-limit-redis`, see
+`middleware/rateLimit.js`) whenever `REDIS_URL` is set - which it already is
+for the `api` service in `docker-compose.yml`, so scaling this way shares
+one count across every instance with no extra configuration. Only a
+deployment that runs the API outside this compose file, without setting
+`REDIS_URL` itself, would fall back to express-rate-limit's in-memory
+store and see N instances effectively grant N times the configured limit.
 
 ## What is still missing
 

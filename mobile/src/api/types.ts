@@ -1,6 +1,4 @@
-// Mirrors the JSON shapes the REAL ParentOS/Uusiksi backend returns
-// (Documents/parentos/backend) - not the bespoke SQLite backend that used
-// to live in this repo. Two things changed almost everywhere as a result:
+// Mirrors the JSON shapes the ParentOS/Uusiksi backend (../backend) returns:
 // ids are numbers (Postgres SERIAL), not cuid strings, and most objects
 // carry the backend's snake_case DB columns directly rather than a
 // hand-picked camelCase projection - that's just what that API sends.

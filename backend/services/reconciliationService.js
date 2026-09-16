@@ -219,48 +219,64 @@ async function findOrphanedPaymentIntents({ lookbackHours = 48, limit = 100 } = 
   const createdAfter = Math.floor(Date.now() / 1000) - lookbackHours * 3600;
   let checked = 0;
   let orphans = 0;
+  let startingAfter;
 
-  const list = await stripe.paymentIntents.list({
-    limit: Math.min(limit, 100),
-    created: { gte: createdAfter },
-  });
-
-  for (const paymentIntent of list?.data ?? []) {
-    checked += 1;
-
-    const { rows } = await query(
-      "SELECT id FROM transactions WHERE stripe_payment_intent_id = $1",
-      [paymentIntent.id]
-    );
-    if (rows[0]) continue;
-
-    // A PaymentIntent that never left 'requires_payment_method' is an
-    // abandoned checkout, not an orphan - the buyer simply never paid, and
-    // no money is at stake. Flagging those would bury the real cases.
-    if (paymentIntent.status === "requires_payment_method" || paymentIntent.status === "canceled") continue;
-
-    const { rows: inserted } = await query(
-      `INSERT INTO reconciliation_issues
-         (transaction_id, stripe_payment_intent_id, issue_type, db_status, stripe_status,
-          db_amount_cents, stripe_amount_cents, detail)
-       VALUES (NULL, $1, 'orphaned_payment_intent', NULL, $2, NULL, $3, $4)
-       ON CONFLICT (stripe_payment_intent_id) WHERE status = 'open' AND transaction_id IS NULL
-       DO UPDATE SET last_seen_at = now()
-       RETURNING (xmax = 0) AS is_new`,
-      [
-        paymentIntent.id,
-        paymentIntent.status,
-        paymentIntent.amount ?? null,
-        "Stripe holds this PaymentIntent but no local transaction references it - likely a checkout that failed between creating the payment and persisting the order.",
-      ]
-    );
-    if (inserted[0]?.is_new) orphans += 1;
-
-    logger.error("orphaned_payment_intent_detected", {
-      paymentIntentId: paymentIntent.id,
-      stripeStatus: paymentIntent.status,
-      amountCents: paymentIntent.amount,
+  // Stripe paginates at 100/page regardless of what's asked for, so a
+  // lookback window with more PaymentIntents than that used to leave
+  // everything past the first page uninspected - silently, since a page
+  // looks exactly like a complete result. Walk pages until Stripe says
+  // there's nothing left or the caller's own limit is reached, since the
+  // entire point of this pass is finding money Stripe knows about that the
+  // database doesn't.
+  while (checked < limit) {
+    const list = await stripe.paymentIntents.list({
+      limit: Math.min(100, limit - checked),
+      created: { gte: createdAfter },
+      ...(startingAfter ? { starting_after: startingAfter } : {}),
     });
+    const page = list?.data ?? [];
+    if (page.length === 0) break;
+
+    for (const paymentIntent of page) {
+      checked += 1;
+
+      const { rows } = await query(
+        "SELECT id FROM transactions WHERE stripe_payment_intent_id = $1",
+        [paymentIntent.id]
+      );
+      if (rows[0]) continue;
+
+      // A PaymentIntent that never left 'requires_payment_method' is an
+      // abandoned checkout, not an orphan - the buyer simply never paid, and
+      // no money is at stake. Flagging those would bury the real cases.
+      if (paymentIntent.status === "requires_payment_method" || paymentIntent.status === "canceled") continue;
+
+      const { rows: inserted } = await query(
+        `INSERT INTO reconciliation_issues
+           (transaction_id, stripe_payment_intent_id, issue_type, db_status, stripe_status,
+            db_amount_cents, stripe_amount_cents, detail)
+         VALUES (NULL, $1, 'orphaned_payment_intent', NULL, $2, NULL, $3, $4)
+         ON CONFLICT (stripe_payment_intent_id) WHERE status = 'open' AND transaction_id IS NULL
+         DO UPDATE SET last_seen_at = now()
+         RETURNING (xmax = 0) AS is_new`,
+        [
+          paymentIntent.id,
+          paymentIntent.status,
+          paymentIntent.amount ?? null,
+          "Stripe holds this PaymentIntent but no local transaction references it - likely a checkout that failed between creating the payment and persisting the order.",
+        ]
+      );
+      if (inserted[0]?.is_new) orphans += 1;
+
+      logger.error("orphaned_payment_intent_detected", {
+        paymentIntentId: paymentIntent.id,
+        stripeStatus: paymentIntent.status,
+        amountCents: paymentIntent.amount,
+      });
+    }
+
+    if (!list?.has_more) break;
+    startingAfter = page[page.length - 1].id;
   }
 
   return { checked, orphans };

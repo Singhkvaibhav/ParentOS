@@ -508,6 +508,50 @@ describe("reverse reconciliation: Stripe -> database", () => {
     expect(Number(rows[0].n)).toBe(1);
   });
 
+  // (P1) This used to fetch a single page and stop - with `has_more: true`
+  // ignored, any orphan past the first page was invisible, silently, since
+  // a partial page looks exactly like a complete result. The entire point
+  // of this pass is finding money Stripe knows about that the database
+  // doesn't, so an unpaginated scan defeats it for any window with more
+  // than one page of PaymentIntents.
+  test("walks every page when Stripe reports has_more, not just the first", async () => {
+    mockList
+      .mockResolvedValueOnce({
+        data: [{ id: "pi_page1", status: "succeeded", amount: 100 }],
+        has_more: true,
+      })
+      .mockResolvedValueOnce({
+        data: [{ id: "pi_page2", status: "succeeded", amount: 200 }],
+        has_more: false,
+      });
+
+    const result = await findOrphanedPaymentIntents();
+
+    expect(result.checked).toBe(2);
+    expect(result.orphans).toBe(2);
+    expect(mockList).toHaveBeenCalledTimes(2);
+    // The second page must be requested starting after the last id of the
+    // first - otherwise "pagination" would just refetch the same page.
+    expect(mockList.mock.calls[1][0]).toMatchObject({ starting_after: "pi_page1" });
+
+    const { rows } = await query(
+      "SELECT stripe_payment_intent_id FROM reconciliation_issues WHERE stripe_payment_intent_id IN ('pi_page1', 'pi_page2')"
+    );
+    expect(rows.map((r) => r.stripe_payment_intent_id).sort()).toEqual(["pi_page1", "pi_page2"]);
+  });
+
+  test("stops paginating once the requested limit is reached, even if Stripe has more", async () => {
+    mockList.mockResolvedValueOnce({
+      data: [{ id: "pi_capped", status: "succeeded", amount: 100 }],
+      has_more: true,
+    });
+
+    const result = await findOrphanedPaymentIntents({ limit: 1 });
+
+    expect(result.checked).toBe(1);
+    expect(mockList).toHaveBeenCalledTimes(1);
+  });
+
   test("it degrades quietly when Stripe isn't configured", async () => {
     const original = process.env.STRIPE_SECRET_KEY;
     delete process.env.STRIPE_SECRET_KEY;

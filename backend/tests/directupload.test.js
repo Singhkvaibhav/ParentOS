@@ -200,4 +200,30 @@ describe("upload keys are tied to the user who requested them", () => {
     const { rows } = await query("SELECT status FROM uploads WHERE storage_key = $1", [presign.body.key]);
     expect(rows[0].status).toBe("failed");
   });
+
+  // (P1) sweepAbandoned used to call deleteImage(storage_key) - but
+  // deleteImage only knows how to pull a key back out of a "listings/..."
+  // URL it issued, and a quarantine storage_key ("quarantine/<uuid>.upload")
+  // is neither a URL nor under that prefix, so it silently failed to match
+  // and the object was never actually deleted. This case (bytes were PUT
+  // but finalize was never called) is exactly where that object exists on
+  // disk to begin with, unlike the presign-only case above.
+  test("abandoned uploads that were actually PUT are deleted from storage, not just marked failed", async () => {
+    const fs = require("fs");
+    const path = require("path");
+    const { query } = require("../db");
+    const { sweepAbandoned } = require("../services/uploadService");
+
+    const presign = await owner.agent.post("/api/v1/uploads/presign").send({ contentType: "image/jpeg" });
+    const jpeg = await jpegWithGpsExif();
+    await owner.agent.put(presign.body.uploadUrl).set("Content-Type", "image/jpeg").send(jpeg);
+    await query("UPDATE uploads SET expires_at = now() - interval '2 hours' WHERE storage_key = $1", [presign.body.key]);
+
+    const filePath = path.resolve(__dirname, "../uploads", presign.body.key);
+    expect(fs.existsSync(filePath)).toBe(true);
+
+    await sweepAbandoned();
+
+    expect(fs.existsSync(filePath)).toBe(false);
+  });
 });
