@@ -8,9 +8,11 @@ const { getStripe } = require("../stripeClient");
 // verification and payout setup.
 
 class ConnectError extends Error {
-  constructor(status, message) {
+  constructor(status, message, code = null, meta = null) {
     super(message);
     this.status = status;
+    this.code = code;
+    if (meta) this.meta = meta;
   }
 }
 
@@ -75,4 +77,19 @@ async function status(userId) {
   return { connected: true, chargesEnabled: !!account.charges_enabled, payoutsEnabled: !!account.payouts_enabled };
 }
 
-module.exports = { ConnectError, onboard, status };
+// "Ready to receive money": a Connect account exists AND Stripe has
+// confirmed both charges and payouts are enabled on it. This is the one
+// definition of that concept - used by both checkout's gate
+// (transactionsService) and platform-health reporting (analyticsService) -
+// so the two can't drift the way the payout-readiness metric once did by
+// checking only connect_charges_enabled while checkout also required
+// connect_payouts_enabled.
+function isPayoutReady(user) {
+  return !!(user?.stripe_connect_account_id && user.connect_charges_enabled && user.connect_payouts_enabled);
+}
+
+// The same rule as a raw SQL boolean expression, for aggregate queries
+// (COUNT(*) FILTER (WHERE ...)) that never materialize a JS user object.
+const PAYOUT_READY_SQL = "(stripe_connect_account_id IS NOT NULL AND connect_charges_enabled AND connect_payouts_enabled)";
+
+module.exports = { ConnectError, onboard, status, isPayoutReady, PAYOUT_READY_SQL };

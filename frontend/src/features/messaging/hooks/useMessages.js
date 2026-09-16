@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { messagingService } from "../../../services/messaging";
 import { pollUntil } from "../../../utils";
+import { track } from "../../../productAnalytics";
 
 // Listing-scoped thread, used from the listing detail page to start or
 // continue "my conversation about this listing" as a buyer.
@@ -22,6 +23,7 @@ export function useBuyerThread(listingId, enabled) {
   const send = useCallback(async (text) => {
     const { conversation: afterSend } = await messagingService.sendBuyerMessage(listingId, text);
     if (mountedRef.current) setConversation(afterSend);
+    track("message_sent", { listingId, role: "buyer" });
 
     // The AI reply (if any) is generated out-of-band now, so it won't be in
     // afterSend yet - poll briefly to pick it up once it lands.
@@ -66,6 +68,7 @@ export function useConversations(enabled) {
 
   const reply = useCallback(async (conversationId, text) => {
     const { conversation: afterReply } = await messagingService.reply(conversationId, text);
+    track("message_sent", { conversationId, role: afterReply.role });
     await refresh();
 
     if (afterReply.role === "buyer" && !afterReply.sellerReplied) {

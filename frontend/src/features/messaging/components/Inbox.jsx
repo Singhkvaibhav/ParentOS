@@ -3,12 +3,24 @@ import { useTranslation } from "react-i18next";
 import { messagingService } from "../../../services/messaging";
 import { X } from "lucide-react";
 import ChatThread from "./ChatThread";
+import { pauseSessionRecording, resumeSessionRecording } from "../../../productAnalytics";
 
 // Unified inbox: shows every conversation the user is in, whether they're
 // the buyer or the seller in it, with a role badge and unread count.
 export default function Inbox({ onClose, conversationsHook }) {
   const { t } = useTranslation();
   const { conversations, loading, reply, markRead } = conversationsHook;
+
+  // Session replay masks form inputs everywhere (see productAnalytics.js),
+  // but already-sent message text renders as plain DOM content, which
+  // input-masking doesn't touch. Private conversations are exactly the
+  // one surface in this app that shouldn't end up in a recording, so
+  // recording is paused for as long as this is mounted (i.e. open) rather
+  // than masked piecemeal.
+  useEffect(() => {
+    pauseSessionRecording();
+    return () => resumeSessionRecording();
+  }, []);
   const [openId, setOpenId] = useState(null);
   const open = conversations.find((c) => c.id === openId);
   const [messages, setMessages] = useState([]);

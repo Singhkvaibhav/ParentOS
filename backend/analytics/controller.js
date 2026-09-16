@@ -1,7 +1,7 @@
 const analyticsService = require("../services/analyticsService");
 
 function handleServiceError(res, e) {
-  if (e instanceof analyticsService.AnalyticsError) return res.status(e.status).json({ error: e.message });
+  if (e instanceof analyticsService.AnalyticsError) return res.status(e.status).json({ error: e.message, code: e.code });
   throw e;
 }
 

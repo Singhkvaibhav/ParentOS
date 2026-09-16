@@ -5,9 +5,11 @@ const { STATUS } = require("../transactionStatus");
 const logger = require("../logger");
 
 class ReconciliationError extends Error {
-  constructor(status, message) {
+  constructor(status, message, code = null, meta = null) {
     super(message);
     this.status = status;
+    this.code = code;
+    if (meta) this.meta = meta;
   }
 }
 
@@ -268,7 +270,7 @@ async function findOrphanedPaymentIntents({ lookbackHours = 48, limit = 100 } = 
 
 async function requireAdmin(userId) {
   const { rows } = await query("SELECT is_admin FROM users WHERE id = $1", [userId]);
-  if (!rows[0]?.is_admin) throw new ReconciliationError(403, "Moderator access required.");
+  if (!rows[0]?.is_admin) throw new ReconciliationError(403, "Moderator access required.", "moderatorRequired");
 }
 
 async function listIssues(adminId, { status = "open" } = {}) {
@@ -300,7 +302,7 @@ async function resolveIssue(adminId, issueIdInput, { status, note }) {
      WHERE id = $4 AND status = 'open'`,
     [status, adminId, note || null, issueId]
   );
-  if (rowCount === 0) throw new ReconciliationError(404, "Issue not found, or already resolved.");
+  if (rowCount === 0) throw new ReconciliationError(404, "Issue not found, or already resolved.", "issueNotFound");
 
   logger.info("reconciliation_issue_resolved", { issueId, adminId, status });
 }

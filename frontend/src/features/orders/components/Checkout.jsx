@@ -7,6 +7,7 @@ import { formatEuro } from "../../../utils";
 import { transactionsService } from "../../../services/transactions";
 import { useMarketplaceConfig } from "../../marketplace/hooks/useMarketplaceConfig";
 import { translateServerError } from "../../../i18n/errorMessages";
+import { track } from "../../../productAnalytics";
 
 function PayButton({ amountLabel, onSuccess, onError }) {
   const { t } = useTranslation();
@@ -84,8 +85,13 @@ export default function Checkout({ listing, onClose, showToast }) {
       const data = await transactionsService.checkout(listing.id, deliveryMethod);
       setSession(data);
       setStripePromise(loadStripe(data.publishableKey));
+      // The completion of this funnel - purchase_completed - is captured
+      // server-side from the Stripe webhook instead of from this browser
+      // session, since that's the only place actual payment success is
+      // confirmed (see productAnalyticsService.js).
+      track("checkout_started", { listingId: listing.id, deliveryMethod });
     } catch (e) {
-      setError(translateServerError(e.message, t));
+      setError(translateServerError(e, t));
     } finally {
       setStarting(false);
     }

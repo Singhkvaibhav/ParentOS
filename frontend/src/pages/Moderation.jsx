@@ -5,6 +5,7 @@ import { moderationService } from "../services/moderation";
 import { useAuth } from "../features/auth/hooks/useAuth";
 import { useToast } from "../hooks/useToast";
 import { translateServerError } from "../i18n/errorMessages";
+import { REPORT_REASONS } from "../constants";
 
 // The "Moderation" node of the admin journey. The backend has had a full
 // report queue and takedown API for several rounds, but nothing in the app
@@ -30,14 +31,10 @@ export default function Moderation() {
     actioned: t("moderation.statusActioned"),
     dismissed: t("moderation.statusDismissed"),
   };
-  const REASON_LABEL = {
-    safety: t("report.reasonSafety"),
-    prohibited: t("report.reasonProhibited"),
-    misleading: t("report.reasonMisleading"),
-    harassment: t("report.reasonHarassment"),
-    spam: t("report.reasonSpam"),
-    other: t("report.reasonOther"),
-  };
+  // Derived from the same REPORT_REASONS list ReportDialog.jsx renders its
+  // radio buttons from, rather than a second hand-written id-to-label map
+  // that could silently drift out of sync with it.
+  const REASON_LABEL = Object.fromEntries(REPORT_REASONS.map((r) => [r.id, t(r.key)]));
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -46,8 +43,8 @@ export default function Moderation() {
       setReports(reports);
       setDenied(false);
     } catch (e) {
-      if (e.message?.includes("Moderator")) setDenied(true);
-      else showToast(translateServerError(e.message, t));
+      if (e.code === "moderatorRequired") setDenied(true);
+      else showToast(translateServerError(e, t));
     } finally {
       setLoading(false);
     }
@@ -61,7 +58,7 @@ export default function Moderation() {
       showToast(successMessage);
       await load();
     } catch (e) {
-      showToast(translateServerError(e.message, t));
+      showToast(translateServerError(e, t));
     }
   }
 

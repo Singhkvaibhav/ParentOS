@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { Leaf, MapPin, ShieldCheck, CreditCard } from "lucide-react";
@@ -8,24 +8,24 @@ import { useAuth } from "../features/auth/hooks/useAuth";
 import ListingCard from "../features/listings/components/ListingCard";
 import AuthModal from "../features/auth/components/AuthModal";
 
+const RECENT_COUNT = 4;
+// Never varies across renders, so this can be a plain module-level
+// constant rather than a useMemo'd object recreated (with identical
+// contents) on every render - useListings only needs a referentially
+// stable object, which a module constant already is for free.
+const HOME_FEED_FILTERS = { category: "all", condition: "all", q: "" };
+
 export default function Home() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { user } = useAuth();
   const favorites = useFavorites(!!user);
   const [authView, setAuthView] = useState(null);
-  const filters = useMemo(
-    () => ({
-      category: "all",
-      condition: "all",
-      q: "",
-    }),
-    []
-  );
 
-  const { listings, loading } = useListings(filters);
-
-  const recentListings = listings.slice(0, 4);
+  // Only ever renders RECENT_COUNT cards, so there's no reason to fetch a
+  // full page (and pay for the joins/trust-score computation on every row)
+  // just to slice most of it away.
+  const { listings: recentListings, loading } = useListings(HOME_FEED_FILTERS, RECENT_COUNT);
 
   function toggleFavorite(listingId) {
     if (!user) { setAuthView("login"); return; }
@@ -91,7 +91,7 @@ export default function Home() {
 
         <div className="hero-image">
           <img
-            src="/images/hero-nursery.png"
+            src="/images/hero-nursery.jpg"
             alt={t("home.heroImageAlt")}
           />
         </div>

@@ -235,6 +235,43 @@ describe("C: Stripe refund succeeds, then the database transition fails", () => 
     const used = mockRefund.mock.calls.map(([, opts]) => opts?.idempotencyKey);
     expect(used).toContain(storedKey);
   });
+
+  test("a task abandoned mid-processing (crashed worker) is reclaimed, not stuck forever", async () => {
+    const admin = await createVerifiedUser(app, { name: "A", email: "advCadmin2@example.com" });
+    await query("UPDATE users SET is_admin = true WHERE id = $1", [admin.user.id]);
+    const s = await seller("advCmodseller2@example.com");
+    const b = await createVerifiedUser(app, { name: "B", email: "advCmodbuyer2@example.com" });
+    const listing = await listingFor(s.agent);
+
+    const checkout = await b.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+    await webhook("payment_intent.succeeded", { id: checkout.body.transaction.stripe_payment_intent_id });
+    await admin.agent.post(`/api/moderation/listings/${listing.id}/takedown`).send({ reason: "Recalled" });
+
+    // Simulate a worker that claimed the task and then crashed before
+    // recording success or failure - the exact state the durable-claim
+    // migration's `started_at` column exists to detect. Backdated well
+    // past the staleness window so this run's own claim attempt (which
+    // also sets started_at = now()) can't coincidentally look fresh.
+    await query(
+      `UPDATE moderation_refund_tasks
+       SET state = 'processing', started_at = now() - interval '1 hour'
+       WHERE transaction_id = $1`,
+      [checkout.body.transaction.id]
+    );
+
+    const { drainTasks } = require("../services/moderationSagaService");
+    const result = await drainTasks({});
+
+    // Reclaimed and completed, not skipped as "already processing".
+    expect(result.processed).toBe(1);
+    expect(result.succeeded).toBe(1);
+
+    const { rows: after } = await query(
+      "SELECT state FROM moderation_refund_tasks WHERE transaction_id = $1",
+      [checkout.body.transaction.id]
+    );
+    expect(after[0].state).toBe("succeeded");
+  });
 });
 
 // Scenario D: Stripe retries deliver the same event several times at once.

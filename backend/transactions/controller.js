@@ -4,13 +4,13 @@ const logger = require("../logger");
 const { OrderTransitionError } = require("../services/orderStateMachine");
 
 function handleServiceError(res, e) {
-  if (e instanceof transactionsService.TransactionError) return res.status(e.status).json({ error: e.message });
+  if (e instanceof transactionsService.TransactionError) return res.status(e.status).json({ error: e.message, code: e.code });
   // An invalid transition is a client mistake (confirming an unpaid order,
   // fulfilling a completed one), not a server fault. Without this it fell
   // through to the global handler and was logged as `unhandled_error` with
   // a stack trace - which in production means error tracking fills with
   // non-errors and real faults get lost in the noise.
-  if (e instanceof OrderTransitionError) return res.status(e.status).json({ error: e.message });
+  if (e instanceof OrderTransitionError) return res.status(e.status).json({ error: e.message, code: e.code });
   throw e;
 }
 

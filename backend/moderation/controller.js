@@ -1,7 +1,7 @@
 const moderationService = require("../services/moderationService");
 
 function handleServiceError(res, e) {
-  if (e instanceof moderationService.ModerationError) return res.status(e.status).json({ error: e.message });
+  if (e instanceof moderationService.ModerationError) return res.status(e.status).json({ error: e.message, code: e.code });
   throw e;
 }
 

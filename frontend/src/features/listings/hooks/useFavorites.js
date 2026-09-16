@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { favoritesService } from "../../../services/favorites";
 import { isAbortError } from "../../../services/api";
 
@@ -30,7 +30,11 @@ export function useFavorites(enabled) {
     return () => controllerRef.current?.abort();
   }, [refresh]);
 
-  const isFavorited = useCallback((listingId) => favorites.some((f) => f.id === listingId), [favorites]);
+  // A grid renders this per visible card, so a linear .some() scan here
+  // was effectively O(listings x favorites) per render. Built once per
+  // `favorites` change instead, so a lookup is O(1).
+  const favoriteIds = useMemo(() => new Set(favorites.map((f) => f.id)), [favorites]);
+  const isFavorited = useCallback((listingId) => favoriteIds.has(listingId), [favoriteIds]);
 
   const toggle = useCallback(async (listingId) => {
     if (isFavorited(listingId)) {

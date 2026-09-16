@@ -1,9 +1,14 @@
-// Backend error responses stay in English (see backend error contract) -
-// rewriting every thrown message to a translation key would touch dozens of
-// services and their tests for a wording change. Instead, known messages are
-// matched against a fixed dictionary here and translated for display; an
-// unrecognized message (a bug message, a new backend string) falls back to
-// the original English rather than showing nothing.
+// Backend errors now carry a stable machine-readable `code` (see each
+// service's `XError` class and services/api.js, which copies it onto the
+// thrown Error) - translated here by code, which can't be broken by a
+// backend wording change the way matching the literal English message
+// could. `meta` (e.g. { n: 140 }) carries the runtime value for messages
+// like "Title must be 140 characters or fewer.".
+//
+// The STATIC/PATTERNS dictionary below still exists as a fallback for the
+// rare error that doesn't carry a code (a genuinely unexpected failure,
+// or a call site that predates this) - matching by message text is worse
+// than matching by code, but still better than showing nothing.
 const STATIC = {
   "Invalid email or password.": "errors.invalidCredentials",
   "Invalid session.": "errors.invalidSession",
@@ -69,8 +74,10 @@ const STATIC = {
   "You can't review yourself.": "errors.cantReviewYourself",
 };
 
-// A handful of messages carry a runtime value (a limit, a minute count).
-// Matched by pattern and re-composed with the translated template instead.
+// Only still needed for the fallback path above - a coded error carries
+// its dynamic value in `meta` instead (see backend error classes' 4th
+// constructor argument) rather than needing it regex-extracted back out
+// of the rendered English sentence.
 const PATTERNS = [
   { re: /^Title must be (\d+) characters or fewer\.$/, key: "errors.titleTooLong", group: "n" },
   { re: /^Description must be (\d+) characters or fewer\.$/, key: "errors.descriptionTooLong", group: "n" },
@@ -81,10 +88,18 @@ const PATTERNS = [
   { re: /^Too many failed attempts\. Try again in (\d+) minute\(s\)\.$/, key: "errors.tooManyFailedAttempts", group: "n" },
 ];
 
-// Translates a message from a backend API error, falling back to the
-// original (English) text for anything not in the dictionary above -
-// better an English sentence than a blank or a raw translation key.
-export function translateServerError(message, t) {
+// `error` is normally the Error thrown by services/api.js's apiFetch (has
+// `.message`, and `.code`/`.meta` when the backend sent them). A bare
+// string is also accepted so call sites aren't forced to change together -
+// it just can't benefit from code-based translation, only the fallback.
+export function translateServerError(error, t) {
+  if (!error) return error;
+  const isString = typeof error === "string";
+  const message = isString ? error : error.message;
+  const code = isString ? null : error.code;
+
+  if (code) return t(`errors.${code}`, isString ? undefined : error.meta || undefined);
+
   if (!message) return message;
   const staticKey = STATIC[message];
   if (staticKey) return t(staticKey);

@@ -59,6 +59,37 @@ fi
 size="$(stat -c %s "$outfile")"
 log "backup verified: ${size} bytes, ${table_count} tables with data"
 
+# --- Offsite copy ---------------------------------------------------------
+#
+# A backup living only on this host's volume does not survive losing the
+# host - which is exactly the scenario a backup exists for. Skipped (not
+# failed) when unconfigured, since a verified local backup is still far
+# better than none and this script must not start failing for a deployment
+# that hasn't set this up yet. But once BACKUP_S3_BUCKET IS set, a failed
+# copy IS treated as a backup failure - an operator who opted into offsite
+# storage needs to know the moment it stops actually happening, not
+# discover it's been silently broken for weeks during an incident.
+#
+# Deliberately a separate bucket/credential set from S3_BUCKET (the one
+# storage/index.js uploads listing photos to): that bucket is public-read,
+# and a database dump must never be reachable the same way.
+if [ -n "${BACKUP_S3_BUCKET:-}" ]; then
+  endpoint_args=()
+  [ -n "${BACKUP_S3_ENDPOINT:-}" ] && endpoint_args=(--endpoint-url "$BACKUP_S3_ENDPOINT")
+
+  if AWS_ACCESS_KEY_ID="${BACKUP_S3_ACCESS_KEY_ID:-}" \
+     AWS_SECRET_ACCESS_KEY="${BACKUP_S3_SECRET_ACCESS_KEY:-}" \
+     AWS_DEFAULT_REGION="${BACKUP_S3_REGION:-auto}" \
+     aws s3 cp "$outfile" "s3://${BACKUP_S3_BUCKET}/$(basename "$outfile")" \
+       "${endpoint_args[@]}" --only-show-errors; then
+    log "offsite copy complete: s3://${BACKUP_S3_BUCKET}/$(basename "$outfile")"
+  else
+    fail "offsite copy to s3://${BACKUP_S3_BUCKET} failed - the local backup above is still verified and intact, but is not yet off this host"
+  fi
+else
+  log "BACKUP_S3_BUCKET not set - backup is LOCAL ONLY (see DEPLOYMENT.md: 'Copy backups off the host')"
+fi
+
 # --- Retention ----------------------------------------------------------
 #
 # Pruned only AFTER the new backup is verified, so a failing backup job can

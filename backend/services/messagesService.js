@@ -24,9 +24,11 @@ const { isEnabled: queuesEnabled, enqueue, QUEUE_NAMES } = require("../queue");
 // permanently set once claimed - not just an in-flight lock.
 
 class MessageError extends Error {
-  constructor(status, message) {
+  constructor(status, message, code = null, meta = null) {
     super(message);
     this.status = status;
+    this.code = code;
+    if (meta) this.meta = meta;
   }
 }
 
@@ -338,18 +340,18 @@ async function myConversations(userId) {
 async function reply(conversationId, userId, text) {
   const { rows } = await query("SELECT * FROM conversations WHERE id = $1", [conversationId]);
   const row = rows[0];
-  if (!row) throw new MessageError(404, "Conversation not found.");
+  if (!row) throw new MessageError(404, "Conversation not found.", "conversationNotFound");
   const role = roleOf(row, userId);
-  if (!role) throw new MessageError(403, "You're not part of this conversation.");
+  if (!role) throw new MessageError(403, "You're not part of this conversation.", "notInConversation");
   if (!text?.trim()) throw new MessageError(400, "text is required.");
   if (text.trim().length > LIMITS.messageLength) {
-    throw new MessageError(400, `Messages must be ${LIMITS.messageLength} characters or fewer.`);
+    throw new MessageError(400, `Messages must be ${LIMITS.messageLength} characters or fewer.`, "messageTooLong", { n: LIMITS.messageLength });
   }
 
   // Also checked here, not just when starting a conversation - someone
   // may be blocked partway through an existing thread.
   if (await isBlockedBetween(row.buyer_id, row.seller_id)) {
-    throw new MessageError(403, "You can no longer message in this conversation.");
+    throw new MessageError(403, "You can no longer message in this conversation.", "cantMessageConversation");
   }
 
   await insertMessage(conversationId, { senderId: userId, senderType: role, text: text.trim() });
@@ -387,8 +389,8 @@ async function reply(conversationId, userId, text) {
 async function listMessages(conversationId, userId, { before, limit } = {}) {
   const { rows } = await query("SELECT * FROM conversations WHERE id = $1", [conversationId]);
   const row = rows[0];
-  if (!row) throw new MessageError(404, "Conversation not found.");
-  if (!roleOf(row, userId)) throw new MessageError(403, "You're not part of this conversation.");
+  if (!row) throw new MessageError(404, "Conversation not found.", "conversationNotFound");
+  if (!roleOf(row, userId)) throw new MessageError(403, "You're not part of this conversation.", "notInConversation");
 
   return getMessages(conversationId, { before, limit });
 }
@@ -396,9 +398,9 @@ async function listMessages(conversationId, userId, { before, limit } = {}) {
 async function markConversationRead(conversationId, userId) {
   const { rows } = await query("SELECT * FROM conversations WHERE id = $1", [conversationId]);
   const row = rows[0];
-  if (!row) throw new MessageError(404, "Conversation not found.");
+  if (!row) throw new MessageError(404, "Conversation not found.", "conversationNotFound");
   const role = roleOf(row, userId);
-  if (!role) throw new MessageError(403, "You're not part of this conversation.");
+  if (!role) throw new MessageError(403, "You're not part of this conversation.", "notInConversation");
   await markRead(conversationId, role);
   const { rows: freshRows } = await query("SELECT * FROM conversations WHERE id = $1", [conversationId]);
   return serializeThread(freshRows[0], userId);
@@ -417,19 +419,19 @@ async function getThread(listingId, buyerId) {
 async function sendBuyerMessage(listingId, buyerId, text) {
   if (!text?.trim()) throw new MessageError(400, "text is required.");
   if (text.trim().length > LIMITS.messageLength) {
-    throw new MessageError(400, `Messages must be ${LIMITS.messageLength} characters or fewer.`);
+    throw new MessageError(400, `Messages must be ${LIMITS.messageLength} characters or fewer.`, "messageTooLong", { n: LIMITS.messageLength });
   }
 
   const { rows: listingRows } = await query("SELECT * FROM listings WHERE id = $1", [listingId]);
   const listing = listingRows[0];
-  if (!listing) throw new MessageError(404, "Listing not found.");
-  if (listing.seller_id === buyerId) throw new MessageError(400, "You can't message your own listing.");
+  if (!listing) throw new MessageError(404, "Listing not found.", "listingNotFound");
+  if (listing.seller_id === buyerId) throw new MessageError(400, "You can't message your own listing.", "cantMessageOwnListing");
 
   // Blocking is symmetric: if either party has blocked the other, neither
   // can start or continue this conversation. A one-way check would only
   // stop the person who didn't want contact in the first place.
   if (await isBlockedBetween(buyerId, listing.seller_id)) {
-    throw new MessageError(403, "You can't message this seller.");
+    throw new MessageError(403, "You can't message this seller.", "cantMessageSeller");
   }
 
   const convo = await getOrCreateConversation(listing, buyerId);

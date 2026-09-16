@@ -3,6 +3,7 @@ const sharp = require("sharp");
 const logger = require("../logger");
 const requireAuth = require("../middleware/requireAuth");
 const { saveBuffer, parseDataUrl } = require("../storage");
+const { makeThumbnail } = require("../services/thumbnailService");
 
 const router = express.Router();
 
@@ -44,7 +45,17 @@ router.post("/", express.json({ limit: "6mb" }), requireAuth, async (req, res) =
 
   try {
     const url = await saveBuffer(processed, "jpg", "image/jpeg");
-    res.status(201).json({ url });
+    // Resized from the original `buffer`, not `processed` - see
+    // thumbnailService.js for why. Best-effort: a thumbnail failure
+    // shouldn't lose the upload the user is actually waiting on, so this
+    // falls back to no thumbnail rather than failing the whole request.
+    const thumbUrl = await makeThumbnail(buffer)
+      .then((thumb) => saveBuffer(thumb, "jpg", "image/jpeg"))
+      .catch((e) => {
+        logger.warn("thumbnail_generation_failed", { requestId: req.id, err: e });
+        return null;
+      });
+    res.status(201).json({ url, thumbUrl });
   } catch (e) {
     logger.error("image_upload_failed", { requestId: req.id, err: e });
     res.status(500).json({ error: "Could not store that image." });
@@ -63,7 +74,7 @@ router.post("/presign", express.json(), requireAuth, async (req, res) => {
   try {
     res.json(await createUpload(req.user.id, { contentType: req.body?.contentType }));
   } catch (e) {
-    if (e instanceof UploadError) return res.status(e.status).json({ error: e.message });
+    if (e instanceof UploadError) return res.status(e.status).json({ error: e.message, code: e.code });
     throw e;
   }
 });
@@ -85,7 +96,7 @@ router.put("/direct/:key", requireAuth, express.raw({ type: "*/*", limit: "12mb"
     await markUploaded(upload.id);
     res.json({ ok: true });
   } catch (e) {
-    if (e instanceof UploadError) return res.status(e.status).json({ error: e.message });
+    if (e instanceof UploadError) return res.status(e.status).json({ error: e.message, code: e.code });
     throw e;
   }
 });
@@ -104,20 +115,20 @@ router.post("/finalize", requireAuth, express.json(), async (req, res) => {
       allowStatuses: ["pending", "uploaded"],
     });
   } catch (e) {
-    if (e instanceof UploadError) return res.status(e.status).json({ error: e.message });
+    if (e instanceof UploadError) return res.status(e.status).json({ error: e.message, code: e.code });
     throw e;
   }
 
   try {
     const result = await processUpload(upload.storage_key, { requestId: req.id });
-    if (result.key) await markProcessed(upload.id, { publicKey: result.key, publicUrl: result.url });
+    if (result.key) await markProcessed(upload.id, { publicKey: result.key, publicUrl: result.url, publicThumbUrl: result.thumbUrl });
     res.json(result);
   } catch (e) {
     if (e instanceof ImageProcessingError) {
       // Recording the failure means a rejected upload can't be retried
       // indefinitely against the same key, and leaves a trace of why.
       await markFailed(upload.id, e.message);
-      return res.status(e.status).json({ error: e.message });
+      return res.status(e.status).json({ error: e.message, code: e.code });
     }
     throw e;
   }

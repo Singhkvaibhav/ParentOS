@@ -78,7 +78,10 @@ describe("notification triggers", () => {
     expect(n).not.toBeNull();
   });
 
-  test("both parties are notified when a sale completes", async () => {
+  test("both parties are notified when a sale completes, and the sale is captured for product analytics", async () => {
+    const productAnalytics = require("../services/productAnalyticsService");
+    const captureSpy = jest.spyOn(productAnalytics, "capture");
+
     const seller = await createVerifiedUser(app, { email: "salenotifyseller@example.com" });
     const buyer = await createVerifiedUser(app, { email: "salenotifybuyer@example.com" });
     const listing = await createListing(seller.agent);
@@ -95,6 +98,13 @@ describe("notification triggers", () => {
 
     expect(await waitForNotification(seller.user.id, "item_sold")).not.toBeNull();
     expect(await waitForNotification(buyer.user.id, "purchase_confirmed")).not.toBeNull();
+
+    // The webhook, not the buyer's browser, is the source of truth for
+    // this funnel event - see productAnalyticsService.js.
+    expect(captureSpy).toHaveBeenCalledWith(buyer.user.id, "purchase_completed", expect.objectContaining({
+      listingId: listing.id,
+    }));
+    captureSpy.mockRestore();
   });
 
   test("a seller is told when their listing is taken down, and why", async () => {

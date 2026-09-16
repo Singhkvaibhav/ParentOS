@@ -50,15 +50,15 @@ function validateListingFields({ category, title, priceCents, sizeOrAge, conditi
 
   if (title !== undefined) {
     const trimmed = String(title).trim();
-    if (!trimmed) throw new ListingError(400, "Title is required.");
-    if (trimmed.length > LIMITS.titleLength) throw new ListingError(400, `Title must be ${LIMITS.titleLength} characters or fewer.`);
+    if (!trimmed) throw new ListingError(400, "Title is required.", "titleRequired");
+    if (trimmed.length > LIMITS.titleLength) throw new ListingError(400, `Title must be ${LIMITS.titleLength} characters or fewer.`, "titleTooLong", { n: LIMITS.titleLength });
     cleaned.title = trimmed;
   }
 
   if (priceCents !== undefined) {
     const cents = Math.round(Number(priceCents));
-    if (!Number.isFinite(cents) || cents <= 0) throw new ListingError(400, "Price must be a positive amount.");
-    if (cents > MARKETPLACE.maxPriceCents) throw new ListingError(400, `Price must be ${MARKETPLACE.maxPriceCents / 100} EUR or less.`);
+    if (!Number.isFinite(cents) || cents <= 0) throw new ListingError(400, "Price must be a positive amount.", "priceMustBePositive");
+    if (cents > MARKETPLACE.maxPriceCents) throw new ListingError(400, `Price must be ${MARKETPLACE.maxPriceCents / 100} EUR or less.`, "priceTooHigh", { amount: MARKETPLACE.maxPriceCents / 100 });
     cleaned.priceCents = cents;
   }
 
@@ -71,19 +71,19 @@ function validateListingFields({ category, title, priceCents, sizeOrAge, conditi
 
   if (sizeOrAge !== undefined && sizeOrAge !== null) {
     const trimmed = String(sizeOrAge).trim();
-    if (trimmed.length > LIMITS.sizeOrAgeLength) throw new ListingError(400, `Size/age must be ${LIMITS.sizeOrAgeLength} characters or fewer.`);
+    if (trimmed.length > LIMITS.sizeOrAgeLength) throw new ListingError(400, `Size/age must be ${LIMITS.sizeOrAgeLength} characters or fewer.`, "sizeOrAgeTooLong", { n: LIMITS.sizeOrAgeLength });
     cleaned.sizeOrAge = trimmed;
   }
 
   if (description !== undefined && description !== null) {
     const trimmed = String(description).trim();
-    if (trimmed.length > LIMITS.descriptionLength) throw new ListingError(400, `Description must be ${LIMITS.descriptionLength} characters or fewer.`);
+    if (trimmed.length > LIMITS.descriptionLength) throw new ListingError(400, `Description must be ${LIMITS.descriptionLength} characters or fewer.`, "descriptionTooLong", { n: LIMITS.descriptionLength });
     cleaned.description = trimmed;
   }
 
   if (!partial) {
     for (const required of ["category", "title", "priceCents", "condition"]) {
-      if (cleaned[required] === undefined) throw new ListingError(400, "Missing required listing fields.");
+      if (cleaned[required] === undefined) throw new ListingError(400, "Missing required listing fields.", "missingListingFields");
     }
   }
 
@@ -107,9 +107,11 @@ function assertValidSubcategory(category, subcategory) {
 }
 
 class ListingError extends Error {
-  constructor(status, message) {
+  constructor(status, message, code = null, meta = null) {
     super(message);
     this.status = status;
+    this.code = code;
+    if (meta) this.meta = meta;
   }
 }
 
@@ -307,7 +309,7 @@ async function list({ category, subcategory, condition, q, lat, lng, maxDistance
 async function getOne(id, viewerId = null) {
   const { rows } = await query(`${LISTING_SELECT} WHERE listings.id = $1`, [id]);
   const listing = rows[0];
-  if (!listing) throw new ListingError(404, "Listing not found.");
+  if (!listing) throw new ListingError(404, "Listing not found.", "listingNotFound");
 
   if (listing.moderated_at) {
     let allowed = false;
@@ -318,7 +320,7 @@ async function getOne(id, viewerId = null) {
         allowed = !!adminRows[0]?.is_admin;
       }
     }
-    if (!allowed) throw new ListingError(404, "Listing not found.");
+    if (!allowed) throw new ListingError(404, "Listing not found.", "listingNotFound");
   }
 
   return withSellerTrust(listing);
@@ -329,18 +331,18 @@ async function mine(sellerId) {
   return rows.map(withSellerTrust);
 }
 
-async function create(sellerId, { category, title, priceCents, sizeOrAge, condition, city, area, description, photoUrl, subcategory }) {
+async function create(sellerId, { category, title, priceCents, sizeOrAge, condition, city, area, description, photoUrl, photoThumbUrl, subcategory }) {
   const clean = validateListingFields({ category, title, priceCents, sizeOrAge, condition, description, subcategory });
   assertValidSubcategory(clean.category, clean.subcategory);
-  if (!city || !area) throw new ListingError(400, "Missing required listing fields.");
+  if (!city || !area) throw new ListingError(400, "Missing required listing fields.", "missingListingFields");
   const loc = findArea(city, area);
   if (!loc) throw new ListingError(400, "Unknown city/area combination.");
 
   const { rows } = await query(
-    `INSERT INTO listings (seller_id, category, subcategory, title, price_cents, size_or_age, condition, city, area, pincode, lat, lng, description, photo_url)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+    `INSERT INTO listings (seller_id, category, subcategory, title, price_cents, size_or_age, condition, city, area, pincode, lat, lng, description, photo_url, photo_thumb_url)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
      RETURNING id`,
-    [sellerId, clean.category, clean.subcategory || null, clean.title, clean.priceCents, clean.sizeOrAge || "Not specified", clean.condition, city, loc.area, loc.pincode, loc.lat, loc.lng, clean.description || "No description added.", photoUrl || null]
+    [sellerId, clean.category, clean.subcategory || null, clean.title, clean.priceCents, clean.sizeOrAge || "Not specified", clean.condition, city, loc.area, loc.pincode, loc.lat, loc.lng, clean.description || "No description added.", photoUrl || null, photoThumbUrl || null]
   );
   return getOne(rows[0].id, sellerId);
 }
@@ -348,12 +350,12 @@ async function create(sellerId, { category, title, priceCents, sizeOrAge, condit
 async function requireOwnedListing(id, sellerId) {
   const { rows } = await query("SELECT * FROM listings WHERE id = $1", [id]);
   const listing = rows[0];
-  if (!listing) throw new ListingError(404, "Listing not found.");
-  if (listing.seller_id !== sellerId) throw new ListingError(403, "Not your listing.");
+  if (!listing) throw new ListingError(404, "Listing not found.", "listingNotFound");
+  if (listing.seller_id !== sellerId) throw new ListingError(403, "Not your listing.", "notYourListing");
   return listing;
 }
 
-async function update(id, sellerId, { category, title, priceCents, sizeOrAge, condition, city, area, description, photoUrl, subcategory }) {
+async function update(id, sellerId, { category, title, priceCents, sizeOrAge, condition, city, area, description, photoUrl, photoThumbUrl, subcategory }) {
   const listing = await requireOwnedListing(id, sellerId);
   // Same rules as create, but only for the fields actually being changed -
   // an edit shouldn't be able to sneak in a value create would reject.
@@ -387,6 +389,7 @@ async function update(id, sellerId, { category, title, priceCents, sizeOrAge, co
   if (clean.condition !== undefined) set("condition", clean.condition);
   if (clean.description !== undefined) set("description", clean.description);
   if (photoUrl !== undefined) set("photo_url", photoUrl);
+  if (photoThumbUrl !== undefined) set("photo_thumb_url", photoThumbUrl);
 
   if (city !== undefined && area !== undefined) {
     const loc = findArea(city, area);
@@ -398,7 +401,7 @@ async function update(id, sellerId, { category, title, priceCents, sizeOrAge, co
     set("lng", loc.lng);
   }
 
-  if (fields.length === 0) throw new ListingError(400, "No fields to update.");
+  if (fields.length === 0) throw new ListingError(400, "No fields to update.", "noFieldsToUpdate");
 
   params.push(listing.id);
   await query(`UPDATE listings SET ${fields.join(", ")} WHERE id = $${params.length}`, params);
@@ -425,7 +428,7 @@ async function remove(id, sellerId) {
 
   const { rows } = await query("SELECT COUNT(*) AS n FROM conversations WHERE listing_id = $1", [listing.id]);
   if (Number(rows[0].n) > 0) {
-    throw new ListingError(409, "This listing has buyer messages - mark it sold instead of deleting, so buyers keep their conversation history.");
+    throw new ListingError(409, "This listing has buyer messages - mark it sold instead of deleting, so buyers keep their conversation history.", "listingHasMessages");
   }
 
   await query("DELETE FROM listings WHERE id = $1", [listing.id]);
@@ -461,7 +464,7 @@ const VALID_TRANSITIONS = {
 async function assertNoPendingTransaction(listingId) {
   const { rows } = await query("SELECT id FROM transactions WHERE listing_id = $1 AND status = 'pending'", [listingId]);
   if (rows.length > 0) {
-    throw new ListingError(409, "This listing has a payment in progress - wait for it to complete or expire before changing its status.");
+    throw new ListingError(409, "This listing has a payment in progress - wait for it to complete or expire before changing its status.", "listingPaymentInProgress");
   }
 }
 
@@ -476,7 +479,7 @@ async function setStatus(id, sellerId, targetStatus, { bumpCreatedAt = false } =
   // decision - the takedown lives in a separate column precisely so their
   // own status actions can't clear it.
   if (listing.moderated_at) {
-    throw new ListingError(403, "This listing was removed by a moderator and can't be changed.");
+    throw new ListingError(403, "This listing was removed by a moderator and can't be changed.", "listingRemoved");
   }
 
   // reserved_at must track status exactly (enforced by a CHECK constraint -
@@ -503,4 +506,14 @@ const markSold = (id, sellerId) => setStatus(id, sellerId, "sold");
 // manual relist.
 const relist = (id, sellerId) => setStatus(id, sellerId, "active", { bumpCreatedAt: true });
 
-module.exports = { ListingError, list, getOne, mine, create, update, remove, reserve, markSold, relist };
+// Lean projection for the sitemap (see seo/routes.js) - just enough to
+// build a URL and a <lastmod>, not the full listing (seller trust fields,
+// description, etc.) a sitemap has no use for.
+async function listActiveForSitemap() {
+  const { rows } = await query(
+    "SELECT id, created_at FROM listings WHERE status = 'active' AND moderated_at IS NULL ORDER BY created_at DESC"
+  );
+  return rows;
+}
+
+module.exports = { ListingError, list, getOne, mine, create, update, remove, reserve, markSold, relist, listActiveForSitemap };

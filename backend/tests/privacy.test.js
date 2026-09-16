@@ -32,6 +32,10 @@ async function listingFor(agent, overrides = {}) {
     category: "toys", title: "Privacy toy", priceCents: 1200,
     condition: "Good", city: "Helsinki", area: "Kamppi", ...overrides,
   });
+  if (!res.body.listing) {
+    console.log("LISTING CREATE DEBUG:", res.status, res.body);
+  }
+  if (!res.body.listing) { console.log("LISTING CREATE DEBUG:", res.status, res.body); }
   await makeSellerPayoutReady(res.body.listing.seller_id);
   return res.body.listing;
 }

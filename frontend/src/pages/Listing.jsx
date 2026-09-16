@@ -6,6 +6,7 @@ import ListingDetails from "../features/listings/components/ListingDetails";
 import { useFavorites } from "../features/listings/hooks/useFavorites";
 import { useAuth } from "../features/auth/hooks/useAuth";
 import { translateServerError } from "../i18n/errorMessages";
+import { useDocumentTitle } from "../hooks/useDocumentTitle";
 
 // Deep-link page for a single listing (e.g. shared link). Reuses the same
 // detail modal as the marketplace grid, just opened directly from a URL.
@@ -19,8 +20,10 @@ export default function Listing() {
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    listingsService.get(id).then((res) => setListing(res.listing)).catch((e) => setError(translateServerError(e.message, t)));
+    listingsService.get(id).then((res) => setListing(res.listing)).catch((e) => setError(translateServerError(e, t)));
   }, [id, t]);
+
+  useDocumentTitle(listing?.title);
 
   if (error) return <p className="muted p-6">{error}</p>;
   if (!listing) return <p className="muted p-6">{t("common.loading")}</p>;

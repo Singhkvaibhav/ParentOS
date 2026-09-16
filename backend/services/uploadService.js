@@ -3,9 +3,11 @@ const { createPresignedUpload, QUARANTINE_PREFIX } = require("../storage");
 const logger = require("../logger");
 
 class UploadError extends Error {
-  constructor(status, message) {
+  constructor(status, message, code = null, meta = null) {
     super(message);
     this.status = status;
+    this.code = code;
+    if (meta) this.meta = meta;
   }
 }
 
@@ -22,7 +24,7 @@ class UploadError extends Error {
 
 async function createUpload(userId, { contentType = "image/jpeg" } = {}) {
   if (!/^image\//.test(String(contentType))) {
-    throw new UploadError(400, "Only images can be uploaded.");
+    throw new UploadError(400, "Only images can be uploaded.", "onlyImages");
   }
 
   const presigned = await createPresignedUpload({ contentType });
@@ -46,7 +48,7 @@ async function requireOwnedUpload(userId, storageKey, { allowStatuses } = {}) {
   // Kept as a cheap structural guard even though ownership is now the real
   // check - it stops a malformed key reaching the storage layer at all.
   if (!key.startsWith(QUARANTINE_PREFIX)) {
-    throw new UploadError(400, "Invalid upload key.");
+    throw new UploadError(400, "Invalid upload key.", "invalidUploadKey");
   }
 
   const { rows } = await query("SELECT * FROM uploads WHERE storage_key = $1", [key]);
@@ -60,11 +62,11 @@ async function requireOwnedUpload(userId, storageKey, { allowStatuses } = {}) {
         storageKey: key, ownerId: upload.user_id, attemptedBy: userId,
       });
     }
-    throw new UploadError(404, "Upload not found.");
+    throw new UploadError(404, "Upload not found.", "uploadNotFound");
   }
 
   if (new Date(upload.expires_at) < new Date() && upload.status === "pending") {
-    throw new UploadError(410, "This upload expired - request a new upload URL.");
+    throw new UploadError(410, "This upload expired - request a new upload URL.", "uploadExpired");
   }
 
   if (allowStatuses && !allowStatuses.includes(upload.status)) {
@@ -78,11 +80,11 @@ async function markUploaded(uploadId) {
   await query("UPDATE uploads SET status = 'uploaded' WHERE id = $1 AND status = 'pending'", [uploadId]);
 }
 
-async function markProcessed(uploadId, { publicKey, publicUrl }) {
+async function markProcessed(uploadId, { publicKey, publicUrl, publicThumbUrl }) {
   await query(
-    `UPDATE uploads SET status = 'processed', public_key = $1, public_url = $2, completed_at = now()
-     WHERE id = $3`,
-    [publicKey, publicUrl, uploadId]
+    `UPDATE uploads SET status = 'processed', public_key = $1, public_url = $2, public_thumb_url = $3, completed_at = now()
+     WHERE id = $4`,
+    [publicKey, publicUrl, publicThumbUrl || null, uploadId]
   );
 }
 

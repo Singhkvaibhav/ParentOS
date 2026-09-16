@@ -22,7 +22,7 @@ export default function MyListings({ listingsHook, showToast }) {
     try {
       await fn();
     } catch (e) {
-      showToast(translateServerError(e.message, t));
+      showToast(translateServerError(e, t));
     }
   }
 

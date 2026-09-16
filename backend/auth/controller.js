@@ -121,6 +121,75 @@ async function logout(req, res) {
 // Ends every *other* session for this user (see authService) and issues a
 // fresh token for the current one, so the device making the request stays
 // signed in while all others are evicted.
+// --- Mobile session issuance ------------------------------------------
+//
+// Same authService functions as the web routes above - signup, the code
+// itself, and password rules are identical for both clients. The only
+// thing that differs is transport: a native app has no cookie jar, so
+// these return the access and refresh tokens as plain JSON fields instead
+// of setting httpOnly cookies. That's a deliberate, narrower trust model
+// than the web flow (see requireAuth.js and middleware/csrf.js for the
+// other half of it) - not a workaround, a different kind of client.
+
+async function mobileVerify(req, res) {
+  try {
+    const { token, user } = await authService.verify(req.body);
+    const { issueRefreshToken } = require("../services/tokenService");
+    const { rows } = await query("SELECT * FROM users WHERE id = $1", [user.id]);
+    const { raw } = await issueRefreshToken(rows[0], { context: { ip: req.ip, userAgent: req.get("user-agent") } });
+    res.json({ user, accessToken: token, refreshToken: raw });
+  } catch (e) {
+    handleServiceError(res, e);
+  }
+}
+
+async function mobileLogin(req, res) {
+  try {
+    const context = { ip: req.ip, userAgent: req.get("user-agent") };
+    const { token, user } = await authService.login(req.body, context);
+    const { issueRefreshToken } = require("../services/tokenService");
+    const { rows } = await query("SELECT * FROM users WHERE id = $1", [user.id]);
+    const { raw } = await issueRefreshToken(rows[0], { context });
+    res.json({ user, accessToken: token, refreshToken: raw });
+  } catch (e) {
+    handleServiceError(res, e);
+  }
+}
+
+async function mobileRefresh(req, res) {
+  const { rotate, TokenError } = require("../services/tokenService");
+  const presented = req.body?.refreshToken;
+  if (!presented) return res.status(401).json({ error: "No session to refresh." });
+
+  try {
+    const result = await rotate(presented, { ip: req.ip, userAgent: req.get("user-agent") });
+    res.json({
+      accessToken: result.accessToken,
+      refreshToken: result.refreshToken,
+      user: {
+        id: result.user.id, name: result.user.name, email: result.user.email,
+        verified: !!result.user.verified, isAdmin: !!result.user.is_admin,
+      },
+    });
+  } catch (e) {
+    if (e instanceof TokenError) return res.status(e.status).json({ error: e.message, code: e.code });
+    throw e;
+  }
+}
+
+async function mobileLogout(req, res) {
+  const presented = req.body?.refreshToken;
+  if (presented) {
+    const { hashToken } = require("../services/tokenService");
+    await query(
+      `UPDATE refresh_tokens SET revoked_at = now(), revoked_reason = 'logout'
+       WHERE token_hash = $1 AND revoked_at IS NULL`,
+      [hashToken(presented)]
+    );
+  }
+  res.json({ ok: true });
+}
+
 async function logoutEverywhere(req, res) {
   try {
     const { token, user } = await authService.logoutEverywhere(req.user.id);
@@ -163,7 +232,7 @@ async function resetPassword(req, res) {
     res.json(await accountSecurity.resetPassword(req.body?.token, req.body?.password));
   } catch (e) {
     if (e instanceof accountSecurity.AccountSecurityError) {
-      return res.status(e.status).json({ error: e.message });
+      return res.status(e.status).json({ error: e.message, code: e.code });
     }
     throw e;
   }
@@ -177,4 +246,6 @@ module.exports = {
   refresh,
   forgotPassword,
   resetPassword,
-  loginHistory, signup, resendCode, verify, login, logout, logoutEverywhere, me };
+  loginHistory, signup, resendCode, verify, login, logout, logoutEverywhere, me,
+  mobileVerify, mobileLogin, mobileRefresh, mobileLogout,
+};

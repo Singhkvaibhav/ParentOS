@@ -11,7 +11,7 @@ const PAGE_SIZE = 20;
 // "Load more" appends rather than replacing, because a marketplace is
 // browsed by scanning: paging that swaps the grid out loses the user's
 // place and their scroll position.
-export function useListings(filters) {
+export function useListings(filters, pageSize = PAGE_SIZE) {
   const [listings, setListings] = useState([]);
   const [total, setTotal] = useState(0);
   const [hasMore, setHasMore] = useState(false);
@@ -31,7 +31,7 @@ export function useListings(filters) {
     setLoading(true);
     setError(null);
     try {
-      const data = await listingsService.list({ ...filters, limit: PAGE_SIZE, offset: 0 }, controller.signal);
+      const data = await listingsService.list({ ...filters, limit: pageSize, offset: 0 }, controller.signal);
       setListings(data.listings);
       setTotal(data.total ?? data.listings.length);
       setHasMore(!!data.hasMore);
@@ -40,7 +40,7 @@ export function useListings(filters) {
     } finally {
       if (!controller.signal.aborted) setLoading(false);
     }
-  }, [filters]);
+  }, [filters, pageSize]);
 
   // Changing filters resets to page one - continuing from an old offset
   // against a different result set would show an arbitrary slice.
@@ -53,7 +53,7 @@ export function useListings(filters) {
     if (loadingMore || !hasMore) return;
     setLoadingMore(true);
     try {
-      const data = await listingsService.list({ ...filters, limit: PAGE_SIZE, offset: listings.length });
+      const data = await listingsService.list({ ...filters, limit: pageSize, offset: listings.length });
       // Deduplicate on id: a listing sold or created between pages can
       // otherwise shift the offset and produce a repeat.
       setListings((prev) => {
@@ -67,7 +67,7 @@ export function useListings(filters) {
     } finally {
       setLoadingMore(false);
     }
-  }, [filters, listings.length, hasMore, loadingMore]);
+  }, [filters, pageSize, listings.length, hasMore, loadingMore]);
 
   return { listings, total, hasMore, loading, loadingMore, error, refresh, loadMore };
 }

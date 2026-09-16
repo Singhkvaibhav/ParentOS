@@ -50,6 +50,32 @@ living room, is a home address. Every uploaded image is re-encoded before
 it is published, which strips this metadata. Images uploaded directly are
 held in a non-public area until that processing completes.
 
+## Analytics and session recordings
+
+We use PostHog to understand how the site is used — which pages are
+visited, which features get used, and where people run into trouble.
+**This is off by default.** Nothing is sent to PostHog until you accept
+the cookie banner shown on your first visit, and you can decline it —
+the site works identically either way, this is genuinely optional.
+
+If you accept, this can include a recording of your session (mouse
+movement, clicks, page navigation) so we can see how the interface
+actually behaves for a real visitor, not just what we intended it to do.
+Two things are deliberately excluded from that recording regardless of
+whether you accept: every form field on the site (the sell form, your
+profile, the message box) has its typed content masked before it ever
+reaches PostHog, and the Messages inbox pauses recording entirely for as
+long as it's open, because the content of a private conversation between
+two users is not ours to send to a third party for this purpose.
+
+We identify you to PostHog by your internal account number only — never
+your name or email address.
+
+**[REVIEW: confirm the legal basis - this is most likely consent (Art.
+6(1)(a)) given the opt-in design above, but confirm rather than assume,
+and confirm whether Finnish ePrivacy rules require anything further for
+the session-recording cookie specifically.]**
+
 ## Why we process it, and on what basis
 
 **[REVIEW: confirm each legal basis.]**
@@ -69,6 +95,11 @@ held in a non-public area until that processing completes.
 - **Other users** — your display name, listings, reviews, approximate
   location, and trust signals are visible to other users. Your email
   address is not.
+- **PostHog** — product analytics and, if you accept the cookie banner,
+  session recordings of how you use the site. See "Analytics and session
+  recordings" below. **[REVIEW: confirm PostHog's hosting region (EU or
+  US) and whether an SCC/data processing agreement is in place if outside
+  the EEA.]**
 - **[FILL IN]** — email delivery provider.
 - **[FILL IN]** — hosting and object storage, and their locations.
 

@@ -8,6 +8,11 @@
     "saving": "Tallennetaan...",
     "sending": "Lähetetään..."
   },
+  "cookieConsent": {
+    "message": "Käytämme analytiikkaa ymmärtääksemme, miten Uusiksia käytetään, ja parantaaksemme sitä. Tämä on oletuksena pois päältä — mitään ei seurata, ellet hyväksy sitä.",
+    "accept": "Hyväksy",
+    "decline": "Hylkää"
+  },
   "header": {
     "searchPlaceholder": "Hae vaatteita, leluja, merkkejä...",
     "searchAriaLabel": "Hae vaatteita, leluja, merkkejä",
@@ -61,7 +66,6 @@
     "loginToSell": "Kirjaudu sisään lisätäksesi ilmoituksen."
   },
   "filters": {
-    "all": "Kaikki",
     "searchPlaceholder": "Hae ilmoituksia...",
     "anyCondition": "Mikä tahansa kunto",
     "useMyLocation": "Käytä sijaintiani",

@@ -2,7 +2,6 @@ import { useState, useRef, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDown } from "lucide-react";
 import { subcategoryLabel } from "../../../constants";
-import { useMarketplaceConfig } from "../hooks/useMarketplaceConfig";
 
 // Stage 1 of the category redesign: a Vinted-style flyout (categories on
 // the left, the hovered/tapped one's subcategories on the right) built
@@ -12,12 +11,17 @@ import { useMarketplaceConfig } from "../hooks/useMarketplaceConfig";
 // this in two stages rather than designing the menu first and hoping the
 // data model catches up.
 //
+// `categories`/`subcategoriesByCategory` come from the parent
+// (SearchFilters) rather than this component calling useMarketplaceConfig()
+// itself - it's rendered as SearchFilters' child and needs the exact same
+// config, so a second independent call here would just fire a second,
+// redundant GET /api/meta/config on every mount.
+//
 // onSelect(categoryId, subcategoryId | null) - null means "this category,
 // no specific subcategory" (the "View all X" row, or clicking the
 // category itself).
-export default function CategoryMenu({ onSelect }) {
+export default function CategoryMenu({ categories, subcategoriesByCategory, onSelect }) {
   const { t } = useTranslation();
-  const { categories, subcategoriesByCategory } = useMarketplaceConfig();
   const [open, setOpen] = useState(false);
   const [activeCategory, setActiveCategory] = useState(null);
   const containerRef = useRef(null);

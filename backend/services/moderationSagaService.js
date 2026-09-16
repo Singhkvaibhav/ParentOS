@@ -26,10 +26,24 @@ const logger = require("../logger");
 
 const MAX_ATTEMPTS = 5;
 
+// A task the claim query moves to 'processing' but that never reaches
+// 'succeeded' or 'failed' - the process was killed mid-Stripe-call by a
+// deploy, OOM, or crash - would otherwise be stuck forever: the original
+// claim query only ever re-selected 'pending' rows, and nothing else read
+// `started_at` (added alongside the claim mechanism specifically for this)
+// back to notice. A 'processing' row older than this is treated as
+// abandoned and reclaimed by the same atomic, SKIP LOCKED claim used for
+// fresh pending tasks, rather than needing a separate reaper process -
+// drainTasks() is already safe to call repeatedly, this just widens what
+// counts as claimable.
+const STALE_PROCESSING_MINUTES = 10;
+
 class ModerationSagaError extends Error {
-  constructor(status, message) {
+  constructor(status, message, code = null, meta = null) {
     super(message);
     this.status = status;
+    this.code = code;
+    if (meta) this.meta = meta;
   }
 }
 
@@ -44,8 +58,8 @@ async function requestTakedown({ listingId, adminId, reason }) {
       [listingId]
     );
     const listing = listingRows[0];
-    if (!listing) throw new ModerationSagaError(404, "Listing not found.");
-    if (listing.moderated_at) throw new ModerationSagaError(409, "This listing is already taken down.");
+    if (!listing) throw new ModerationSagaError(404, "Listing not found.", "listingNotFound");
+    if (listing.moderated_at) throw new ModerationSagaError(409, "This listing is already taken down.", "listingAlreadyTakenDown");
 
     // Hide it now. This is the safety-critical half and it must not depend
     // on a payment provider being reachable.
@@ -157,6 +171,9 @@ async function drainTasks({ actionId = null, limit = 50 } = {}) {
 
   // Joined so the audit trail can attribute the refund to the moderator who
   // ordered it, rather than to nobody.
+  const params = actionId
+    ? [MAX_ATTEMPTS, limit, STALE_PROCESSING_MINUTES, actionId]
+    : [MAX_ATTEMPTS, limit, STALE_PROCESSING_MINUTES];
   const { rows: tasks } = await query(
     `WITH claimed AS (
        UPDATE moderation_refund_tasks t
@@ -166,9 +183,12 @@ async function drainTasks({ actionId = null, limit = 50 } = {}) {
        WHERE t.id IN (
          SELECT t2.id
          FROM moderation_refund_tasks t2
-         WHERE t2.state = 'pending'
+         WHERE (
+             t2.state = 'pending'
+             OR (t2.state = 'processing' AND t2.started_at < now() - ($3 || ' minutes')::interval)
+           )
            AND t2.attempts < $1
-           ${actionId ? "AND t2.moderation_action_id = $3" : ""}
+           ${actionId ? "AND t2.moderation_action_id = $4" : ""}
          ORDER BY t2.created_at ASC
          LIMIT $2
          FOR UPDATE OF t2 SKIP LOCKED
@@ -179,7 +199,7 @@ async function drainTasks({ actionId = null, limit = 50 } = {}) {
      FROM claimed c
      JOIN moderation_actions a ON a.id = c.moderation_action_id
      ORDER BY c.created_at ASC`,
-    actionId ? [MAX_ATTEMPTS, limit, actionId] : [MAX_ATTEMPTS, limit]
+    params
   );
 
   let succeeded = 0;
@@ -284,6 +304,7 @@ async function listUnsettled() {
   const { rows } = await query(`
     SELECT a.*, l.title AS listing_title,
            COUNT(t.id) FILTER (WHERE t.state = 'pending') AS pending_tasks,
+           COUNT(t.id) FILTER (WHERE t.state = 'processing') AS processing_tasks,
            COUNT(t.id) FILTER (WHERE t.state = 'failed') AS failed_tasks
     FROM moderation_actions a
     LEFT JOIN listings l ON l.id = a.listing_id

@@ -4,9 +4,11 @@ const logger = require("../logger");
 const { notify } = require("./notificationsService");
 
 class ModerationError extends Error {
-  constructor(status, message) {
+  constructor(status, message, code = null, meta = null) {
     super(message);
     this.status = status;
+    this.code = code;
+    if (meta) this.meta = meta;
   }
 }
 
@@ -28,7 +30,7 @@ async function createReport(reporterId, { listingId, reportedUserId, conversatio
     throw new ModerationError(400, `Invalid reason - must be one of: ${[...VALID_REASONS].join(", ")}.`);
   }
   if (detail && String(detail).length > MAX_DETAIL_LENGTH) {
-    throw new ModerationError(400, `Detail must be ${MAX_DETAIL_LENGTH} characters or fewer.`);
+    throw new ModerationError(400, `Detail must be ${MAX_DETAIL_LENGTH} characters or fewer.`, "detailTooLong", { n: MAX_DETAIL_LENGTH });
   }
 
   const parsed = {
@@ -38,7 +40,7 @@ async function createReport(reporterId, { listingId, reportedUserId, conversatio
   };
 
   if (parsed.reportedUserId === reporterId) {
-    throw new ModerationError(400, "You can't report yourself.");
+    throw new ModerationError(400, "You can't report yourself.", "cantReportYourself");
   }
 
   // Only someone actually in a conversation can report it - otherwise
@@ -48,7 +50,7 @@ async function createReport(reporterId, { listingId, reportedUserId, conversatio
       "SELECT 1 FROM conversations WHERE id = $1 AND (buyer_id = $2 OR seller_id = $2)",
       [parsed.conversationId, reporterId]
     );
-    if (!rows[0]) throw new ModerationError(404, "Conversation not found.");
+    if (!rows[0]) throw new ModerationError(404, "Conversation not found.", "conversationNotFound");
   }
 
   try {
@@ -69,8 +71,8 @@ async function createReport(reporterId, { listingId, reportedUserId, conversatio
 
     return rows[0];
   } catch (e) {
-    if (e.code === "23505") throw new ModerationError(409, "You've already reported this - it's in the queue."); // unique_violation
-    if (e.code === "23503") throw new ModerationError(404, "The thing you're reporting doesn't exist."); // fk_violation
+    if (e.code === "23505") throw new ModerationError(409, "You've already reported this - it's in the queue.", "alreadyReported"); // unique_violation
+    if (e.code === "23503") throw new ModerationError(404, "The thing you're reporting doesn't exist.", "reportTargetMissing"); // fk_violation
     throw e;
   }
 }
@@ -79,10 +81,10 @@ async function createReport(reporterId, { listingId, reportedUserId, conversatio
 
 async function blockUser(blockerId, blockedIdInput) {
   const blockedId = parseId(blockedIdInput, "userId", ModerationError);
-  if (blockedId === blockerId) throw new ModerationError(400, "You can't block yourself.");
+  if (blockedId === blockerId) throw new ModerationError(400, "You can't block yourself.", "cantBlockYourself");
 
   const { rows } = await query("SELECT id FROM users WHERE id = $1", [blockedId]);
-  if (!rows[0]) throw new ModerationError(404, "User not found.");
+  if (!rows[0]) throw new ModerationError(404, "User not found.", "userNotFound");
 
   await query(
     "INSERT INTO blocks (blocker_id, blocked_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
@@ -122,7 +124,7 @@ async function isBlockedBetween(userA, userB) {
 
 async function requireAdmin(userId) {
   const { rows } = await query("SELECT is_admin FROM users WHERE id = $1", [userId]);
-  if (!rows[0]?.is_admin) throw new ModerationError(403, "Moderator access required.");
+  if (!rows[0]?.is_admin) throw new ModerationError(403, "Moderator access required.", "moderatorRequired");
 }
 
 async function listReports(adminId, { status = "open", limit = 50 } = {}) {
@@ -162,7 +164,7 @@ async function takeDownListing(adminId, listingIdInput, reason) {
   try {
     requested = await requestTakedown({ listingId, adminId, reason });
   } catch (e) {
-    if (e instanceof ModerationSagaError) throw new ModerationError(e.status, e.message);
+    if (e instanceof ModerationSagaError) throw new ModerationError(e.status, e.message, e.code);
     throw e;
   }
 
@@ -214,7 +216,7 @@ async function resolveReport(adminId, reportIdInput, { status, note }) {
      WHERE id = $4`,
     [status, adminId, note || null, reportId]
   );
-  if (rowCount === 0) throw new ModerationError(404, "Report not found.");
+  if (rowCount === 0) throw new ModerationError(404, "Report not found.", "reportNotFound");
 
   logger.info("report_resolved", { reportId, adminId, status });
 }

@@ -5,9 +5,11 @@ const logger = require("../logger");
 const { BRAND } = require("../config");
 
 class PrivacyError extends Error {
-  constructor(status, message) {
+  constructor(status, message, code = null, meta = null) {
     super(message);
     this.status = status;
+    this.code = code;
+    if (meta) this.meta = meta;
   }
 }
 
@@ -67,7 +69,7 @@ async function exportUserData(userId) {
     query("SELECT id, reason, detail, status, created_at FROM reports WHERE reporter_id = $1", [userId]),
   ]);
 
-  if (!profile.rows[0]) throw new PrivacyError(404, "User not found.");
+  if (!profile.rows[0]) throw new PrivacyError(404, "User not found.", "userNotFound");
 
   return {
     exportedAt: new Date().toISOString(),
@@ -124,7 +126,7 @@ async function deletionBlockers(userId) {
 async function deleteAccount(userId, { confirmEmail } = {}) {
   const { rows: userRows } = await query("SELECT * FROM users WHERE id = $1", [userId]);
   const user = userRows[0];
-  if (!user) throw new PrivacyError(404, "User not found.");
+  if (!user) throw new PrivacyError(404, "User not found.", "userNotFound");
 
   // Deletion is irreversible, so it requires the user to type their own
   // address - the same reason destructive UI asks you to name the thing.

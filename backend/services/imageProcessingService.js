@@ -4,6 +4,7 @@ const {
   PUBLIC_PREFIX,
 } = require("../storage");
 const { isEnabled: queuesEnabled, enqueue, QUEUE_NAMES } = require("../queue");
+const { makeThumbnail } = require("./thumbnailService");
 const logger = require("../logger");
 
 // (#13) Processes a directly-uploaded image out of quarantine.
@@ -22,9 +23,11 @@ const JPEG_QUALITY = 82;
 const MAX_OUTPUT_BYTES = 5 * 1024 * 1024;
 
 class ImageProcessingError extends Error {
-  constructor(status, message) {
+  constructor(status, message, code = null, meta = null) {
     super(message);
     this.status = status;
+    this.code = code;
+    if (meta) this.meta = meta;
   }
 }
 
@@ -43,16 +46,30 @@ async function processQuarantinedImage(quarantineKey) {
     // Not a real image. Remove it rather than leaving unvalidated bytes
     // sitting in the bucket.
     await deleteImage(quarantineKey).catch(() => {});
-    throw new ImageProcessingError(400, "That doesn't look like a valid image.");
+    throw new ImageProcessingError(400, "That doesn't look like a valid image.", "notAnImage");
   }
 
   if (processed.length > MAX_OUTPUT_BYTES) {
     await deleteImage(quarantineKey).catch(() => {});
-    throw new ImageProcessingError(400, "Image is still too large after resizing.");
+    throw new ImageProcessingError(400, "Image is still too large after resizing.", "imageStillTooLarge");
   }
 
-  const publicKey = `${PUBLIC_PREFIX}${quarantineKey.split("/").pop().replace(/\.[^.]+$/, "")}.jpg`;
-  const url = await writeObject(publicKey, processed);
+  const basename = quarantineKey.split("/").pop().replace(/\.[^.]+$/, "");
+  const publicKey = `${PUBLIC_PREFIX}${basename}.jpg`;
+  const thumbKey = `${PUBLIC_PREFIX}${basename}-thumb.jpg`;
+
+  const [url, thumbUrl] = await Promise.all([
+    writeObject(publicKey, processed),
+    // Resized from `raw`, not `processed` - see thumbnailService.js for why
+    // (avoids double JPEG compression). A thumbnail failure here would be
+    // strange (the same bytes just passed the full-size resize above) but
+    // isn't worth failing the whole upload over - the listing still gets a
+    // usable photo_url, just without a small variant for the grid.
+    makeThumbnail(raw).then((buf) => writeObject(thumbKey, buf)).catch((e) => {
+      logger.warn("thumbnail_generation_failed", { quarantineKey, err: e });
+      return null;
+    }),
+  ]);
 
   // The quarantine copy still holds the original EXIF, so it must not be
   // left behind.
@@ -61,7 +78,7 @@ async function processQuarantinedImage(quarantineKey) {
   );
 
   logger.info("image_processed", { quarantineKey, publicKey, bytes: processed.length });
-  return { url, key: publicKey };
+  return { url, thumbUrl, key: publicKey };
 }
 
 // Called from the request path. Prefers the queue so a slow image doesn't

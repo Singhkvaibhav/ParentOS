@@ -46,6 +46,28 @@ function requireCsrfToken(req, res, next) {
   // Stripe's signature over the raw body (see transactionsService).
   if (req.path === "/api/transactions/webhook") return next();
 
+  // CSRF exploits *ambient* credentials - a cookie the browser attaches
+  // automatically, to any site, without the page's JS doing anything. A
+  // Bearer token only travels because a client explicitly reads it from
+  // storage and sets the header itself; a malicious third-party page can
+  // make a victim's browser *send* cookies, but it cannot make a native
+  // mobile app attach a header the app didn't choose to attach. So a
+  // request authenticated this way (see requireAuth.js) has no CSRF risk
+  // to protect against either.
+  if (req.get("authorization")?.match(/^Bearer /i)) return next();
+
+  // The mobile client has no cookie jar and no way to read a non-httpOnly
+  // cookie's value the way browser JS reads document.cookie, so it can't
+  // participate in the double-submit dance at all - including on
+  // pre-login routes like signup, where there's no Bearer token yet
+  // either (no session exists to attach one from). These routes (see
+  // auth/routes.js) don't rely on an ambient cookie to decide who an
+  // action applies to in the first place - signup, resend-code and
+  // forgot/reset-password all take the identifying value (email or an
+  // emailed token) explicitly in the body - so exempting them doesn't
+  // weaken what CSRF protection here actually defends.
+  if (req.path.startsWith("/api/auth/mobile/")) return next();
+
   const cookieToken = req.cookies?.[CSRF_COOKIE_NAME];
   const headerToken = req.get(CSRF_HEADER_NAME);
 

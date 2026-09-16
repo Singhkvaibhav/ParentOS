@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { metaService } from "../../../services/meta";
 import { categoryMeta, CATEGORY_METADATA } from "../../../constants";
 
@@ -35,10 +35,16 @@ export function useMarketplaceConfig() {
   }, []);
 
   const categoryIds = raw?.categories ?? PRESENTATION_ONLY_FALLBACK;
+  // Memoized so consumers that key an effect off `categories` (e.g.
+  // CategoryMenu picking a default active category) only re-run it when
+  // the ids actually change, not on every render of this hook's caller.
+  const categories = useMemo(
+    () => categoryIds.map((id) => ({ id, ...categoryMeta(id) })),
+    [categoryIds]
+  );
 
   return {
-    // Decorated for rendering: { id, label, icon } per category.
-    categories: categoryIds.map((id) => ({ id, ...categoryMeta(id) })),
+    categories,
     // No frontend fallback: conditions are exact strings the backend
     // validates, so guessing them would only produce rejections.
     conditions: raw?.conditions ?? [],

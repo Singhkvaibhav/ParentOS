@@ -12,6 +12,7 @@ import AuthModal from "./features/auth/components/AuthModal";
 import Inbox from "./features/messaging/components/Inbox";
 import NotificationBell from "./features/notifications/components/NotificationBell";
 import LanguageSwitcher from "./components/ui/LanguageSwitcher";
+import CookieConsent from "./components/ui/CookieConsent";
 import { useAuth } from "./features/auth/hooks/useAuth";
 import { useConversations } from "./features/messaging/hooks/useMessages";
 import { useNotifications } from "./features/notifications/hooks/useNotifications";
@@ -95,6 +96,7 @@ export default function App() {
       {authView && <AuthModal initialView={authView} onClose={() => setAuthView(null)} showToast={showToast} />}
       {showInbox && <Inbox onClose={() => setShowInbox(false)} conversationsHook={conversationsHook} />}
       {toast && <div className="toast">{toast}</div>}
+      <CookieConsent />
     </div>
   );
 }

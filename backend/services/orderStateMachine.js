@@ -19,9 +19,11 @@ const logger = require("../logger");
 // the same database transaction.
 
 class OrderTransitionError extends Error {
-  constructor(status, message) {
+  constructor(status, message, code = null, meta = null) {
     super(message);
     this.status = status;
+    this.code = code;
+    if (meta) this.meta = meta;
   }
 }
 
@@ -112,7 +114,7 @@ async function transitionOrder({
     // one would silently overwrite the other.
     const { rows } = await q("SELECT * FROM transactions WHERE id = $1 FOR UPDATE", [transactionId]);
     const order = rows[0];
-    if (!order) throw new OrderTransitionError(404, "Order not found.");
+    if (!order) throw new OrderTransitionError(404, "Order not found.", "orderNotFound");
 
     const from = order.status;
 
@@ -141,7 +143,7 @@ async function transitionOrder({
        RETURNING *`,
       REVERSAL_STATES.has(to) ? [to, transactionId, from, reason] : [to, transactionId, from]
     );
-    if (!updated[0]) throw new OrderTransitionError(409, "The order changed while we were updating it.");
+    if (!updated[0]) throw new OrderTransitionError(409, "The order changed while we were updating it.", "orderChanged");
 
     // The audit event is written in the SAME transaction as the status
     // change. That's the point: an order's status can never move without

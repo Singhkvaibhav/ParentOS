@@ -8,6 +8,7 @@ import { listingsService } from "../../../services/listings";
 import { uploadsService } from "../../../services/uploads";
 import { useAuth } from "../../auth/hooks/useAuth";
 import { translateServerError } from "../../../i18n/errorMessages";
+import { track } from "../../../productAnalytics";
 
 export default function SellForm({ onClose, onCreated, onUpdated, showToast, editingListing }) {
   const { t } = useTranslation();
@@ -24,9 +25,13 @@ export default function SellForm({ onClose, onCreated, onUpdated, showToast, edi
   const [area, setArea] = useState(editingListing?.area || AREA_DATA[CITIES[0]][0].area);
   const [description, setDescription] = useState(editingListing?.description || "");
   // photoPreview is just for display (local blob URL or the already-stored
-  // URL); photoUrl is the real object-storage URL that actually gets saved.
+  // URL); photoUrl/photoThumbUrl are the real object-storage URLs that
+  // actually get saved - the thumb is what the marketplace grid renders,
+  // so listings created before it existed (or if generating one failed)
+  // simply have none and the grid falls back to the full-size photo.
   const [photoPreview, setPhotoPreview] = useState(editingListing?.photo_url || null);
   const [photoUrl, setPhotoUrl] = useState(editingListing?.photo_url || null);
+  const [photoThumbUrl, setPhotoThumbUrl] = useState(editingListing?.photo_thumb_url || null);
   const [photoBusy, setPhotoBusy] = useState(false);
 
   // Defaults are seeded from the server's list rather than hardcoded, so
@@ -44,8 +49,9 @@ export default function SellForm({ onClose, onCreated, onUpdated, showToast, edi
     try {
       const localDataUrl = await compressImage(file);
       setPhotoPreview(localDataUrl); // shows instantly while the upload happens
-      const { url } = await uploadsService.uploadImage(localDataUrl);
+      const { url, thumbUrl } = await uploadsService.uploadImage(localDataUrl);
       setPhotoUrl(url);
+      setPhotoThumbUrl(thumbUrl || null);
     } catch {
       showToast(t("sellForm.toastPhotoFail"));
     } finally {
@@ -68,20 +74,21 @@ export default function SellForm({ onClose, onCreated, onUpdated, showToast, edi
       if (isEditing) {
         const { listing } = await listingsService.update(
           editingListing.id,
-          { category, subcategory, title: title.trim(), priceCents, sizeOrAge, condition, city, area, description, photoUrl }
+          { category, subcategory, title: title.trim(), priceCents, sizeOrAge, condition, city, area, description, photoUrl, photoThumbUrl }
         );
         onUpdated(listing);
         showToast(t("sellForm.toastUpdated"));
       } else {
         const { listing } = await listingsService.create(
-          { category, subcategory, title: title.trim(), priceCents, sizeOrAge, condition, city, area, description, photoUrl }
+          { category, subcategory, title: title.trim(), priceCents, sizeOrAge, condition, city, area, description, photoUrl, photoThumbUrl }
         );
         onCreated(listing);
+        track("listing_created", { category, hasPhoto: !!photoUrl });
         showToast(t("sellForm.toastPublished"));
       }
       onClose();
     } catch (e) {
-      showToast(translateServerError(e.message, t));
+      showToast(translateServerError(e, t));
     } finally {
       setSubmitting(false);
     }

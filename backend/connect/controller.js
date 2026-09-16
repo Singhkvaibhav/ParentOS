@@ -1,7 +1,7 @@
 const connectService = require("../services/connectService");
 
 function handleServiceError(res, e) {
-  if (e instanceof connectService.ConnectError) return res.status(e.status).json({ error: e.message });
+  if (e instanceof connectService.ConnectError) return res.status(e.status).json({ error: e.message, code: e.code });
   throw e;
 }
 

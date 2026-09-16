@@ -7,15 +7,18 @@ const logger = require("../logger");
 const { notify } = require("./notificationsService");
 const { transitionOrder, recordOrderCreated, orderHistory } = require("./orderStateMachine");
 const { refreshTransactionCounters } = require("./trustService");
+const { isPayoutReady } = require("./connectService");
 const { STATUS } = require("../transactionStatus");
 
 // Marketplace economics live in config.js - see the note there.
 const { deliveryFeeCents: DELIVERY_FEE_CENTS, commissionPercent: COMMISSION_PERCENT, reservationTtlMinutes: RESERVATION_TTL_MINUTES } = MARKETPLACE;
 
 class TransactionError extends Error {
-  constructor(status, message) {
+  constructor(status, message, code = null, meta = null) {
     super(message);
     this.status = status;
+    this.code = code;
+    if (meta) this.meta = meta;
   }
 }
 
@@ -34,11 +37,11 @@ async function checkout(buyerId, { listingId: listingIdInput, deliveryMethod }) 
 
   const { rows: listingRows } = await query("SELECT * FROM listings WHERE id = $1", [listingId]);
   const listing = listingRows[0];
-  if (!listing) throw new TransactionError(404, "Listing not found.");
-  if (listing.seller_id === buyerId) throw new TransactionError(400, "You can't buy your own listing.");
+  if (!listing) throw new TransactionError(404, "Listing not found.", "listingNotFound");
+  if (listing.seller_id === buyerId) throw new TransactionError(400, "You can't buy your own listing.", "cantBuyOwnListing");
   // A listing a moderator removed must not be purchasable, even by
   // someone holding a direct link to it from before the takedown.
-  if (listing.moderated_at) throw new TransactionError(409, "This listing is no longer available.");
+  if (listing.moderated_at) throw new TransactionError(409, "This listing is no longer available.", "listingUnavailable");
 
   // (P1 #10) The seller must be able to actually receive the money before
   // a buyer is allowed to part with it. Previously checkout silently fell
@@ -53,12 +56,8 @@ async function checkout(buyerId, { listingId: listingIdInput, deliveryMethod }) 
     [listing.seller_id]
   );
   const seller = sellerRows[0];
-  if (
-    !seller?.stripe_connect_account_id ||
-    !seller.connect_charges_enabled ||
-    !seller.connect_payouts_enabled
-  ) {
-    throw new TransactionError(409, "This seller hasn't finished setting up payouts yet, so this item can't be bought right now.");
+  if (!isPayoutReady(seller)) {
+    throw new TransactionError(409, "This seller hasn't finished setting up payouts yet, so this item can't be bought right now.", "sellerPayoutsNotReady");
   }
 
   const claim = await query(
@@ -66,7 +65,7 @@ async function checkout(buyerId, { listingId: listingIdInput, deliveryMethod }) 
     [listingId]
   );
   if (claim.rowCount === 0) {
-    throw new TransactionError(409, "This listing is no longer available - someone else may have just bought it.");
+    throw new TransactionError(409, "This listing is no longer available - someone else may have just bought it.", "listingGone");
   }
 
   // Checkout spans two systems: reserve here, call Stripe, then persist
@@ -128,7 +127,7 @@ async function checkout(buyerId, { listingId: listingIdInput, deliveryMethod }) 
   } catch (e) {
     logger.error("stripe_payment_intent_failed", { listingId, buyerId, err: e });
     await releaseReservation(listingId);
-    throw new TransactionError(502, "Stripe couldn't create the payment - check your Stripe test keys.");
+    throw new TransactionError(502, "Stripe couldn't create the payment - check your Stripe test keys.", "stripeCreateFailed");
   }
 
   // The PaymentIntent now genuinely exists at Stripe. If persisting our own
@@ -177,7 +176,7 @@ async function checkout(buyerId, { listingId: listingIdInput, deliveryMethod }) 
       logger.error("orphaned_payment_intent_needs_manual_review", { paymentIntentId: paymentIntent.id, err: cancelError });
     }
     await releaseReservation(listingId);
-    throw new TransactionError(500, "Couldn't complete checkout - please try again.");
+    throw new TransactionError(500, "Couldn't complete checkout - please try again.", "checkoutFailed");
   }
 
   // Baseline for the window above. Without a success measurement the
@@ -290,6 +289,18 @@ async function handleWebhook(rawBody, signature) {
         title: `Your purchase of "${title}" is confirmed`,
         body: `Message the seller to arrange ${t.delivery_method === "delivery" ? "delivery" : "pickup"}.`,
         listingId: t.listing_id,
+      });
+
+      // The authoritative "purchase completed" funnel event - captured
+      // here, from the webhook, not from the buyer's browser after
+      // stripe.confirmPayment() resolves. A client-side event would fire
+      // (or not) based on whether the tab was still open; this fires based
+      // on whether Stripe actually confirmed the money moved, which is the
+      // fact that matters for a revenue funnel.
+      require("./productAnalyticsService").capture(t.buyer_id, "purchase_completed", {
+        listingId: t.listing_id,
+        totalAmountCents: t.total_amount_cents,
+        deliveryMethod: t.delivery_method,
       });
     }
 
@@ -421,13 +432,13 @@ async function loadOrderFor(userId, transactionIdInput, { role } = {}) {
   const transactionId = parseId(transactionIdInput, "transactionId", TransactionError);
   const { rows } = await query("SELECT * FROM transactions WHERE id = $1", [transactionId]);
   const transaction = rows[0];
-  if (!transaction) throw new TransactionError(404, "Order not found.");
+  if (!transaction) throw new TransactionError(404, "Order not found.", "orderNotFound");
 
   const isBuyer = transaction.buyer_id === userId;
   const isSeller = transaction.seller_id === userId;
-  if (!isBuyer && !isSeller) throw new TransactionError(403, "Not your order.");
-  if (role === "buyer" && !isBuyer) throw new TransactionError(403, "Only the buyer can do that.");
-  if (role === "seller" && !isSeller) throw new TransactionError(403, "Only the seller can do that.");
+  if (!isBuyer && !isSeller) throw new TransactionError(403, "Not your order.", "notYourOrder");
+  if (role === "buyer" && !isBuyer) throw new TransactionError(403, "Only the buyer can do that.", "onlyBuyer");
+  if (role === "seller" && !isSeller) throw new TransactionError(403, "Only the seller can do that.", "onlySeller");
 
   return transaction;
 }
@@ -465,7 +476,7 @@ async function confirmReceipt(buyerId, transactionIdInput) {
 // only records that the deal is contested and freezes it there.
 async function raiseDispute(userId, transactionIdInput, reason) {
   const transaction = await loadOrderFor(userId, transactionIdInput);
-  if (!reason?.trim()) throw new TransactionError(400, "A reason is required to raise a dispute.");
+  if (!reason?.trim()) throw new TransactionError(400, "A reason is required to raise a dispute.", "disputeReasonRequired");
 
   const updated = await transitionOrder({
     transactionId: transaction.id,
@@ -523,7 +534,7 @@ async function listingTitle(listingId) {
 
 async function resolveDispute(adminId, transactionIdInput, { outcome, note }) {
   const { rows: adminRows } = await query("SELECT is_admin FROM users WHERE id = $1", [adminId]);
-  if (!adminRows[0]?.is_admin) throw new TransactionError(403, "Moderator access required.");
+  if (!adminRows[0]?.is_admin) throw new TransactionError(403, "Moderator access required.", "moderatorRequired");
 
   const transactionId = parseId(transactionIdInput, "transactionId", TransactionError);
   if (!["refund", "uphold"].includes(outcome)) {
@@ -532,14 +543,14 @@ async function resolveDispute(adminId, transactionIdInput, { outcome, note }) {
   if (!note?.trim()) {
     // A resolution with no rationale is unreviewable later, and disputes
     // are exactly the records that get re-examined.
-    throw new TransactionError(400, "A resolution note is required.");
+    throw new TransactionError(400, "A resolution note is required.", "resolutionNoteRequired");
   }
 
   const { rows } = await query("SELECT * FROM transactions WHERE id = $1", [transactionId]);
   const transaction = rows[0];
-  if (!transaction) throw new TransactionError(404, "Order not found.");
+  if (!transaction) throw new TransactionError(404, "Order not found.", "orderNotFound");
   if (transaction.status !== STATUS.DISPUTED) {
-    throw new TransactionError(409, "That order isn't disputed.");
+    throw new TransactionError(409, "That order isn't disputed.", "orderNotDisputed");
   }
 
   if (outcome === "refund") {
@@ -551,7 +562,7 @@ async function resolveDispute(adminId, transactionIdInput, { outcome, note }) {
     try {
       stripe = getStripe();
     } catch {
-      throw new TransactionError(503, "Stripe isn't configured, so a refund can't be issued.");
+      throw new TransactionError(503, "Stripe isn't configured, so a refund can't be issued.", "stripeNotConfiguredRefund");
     }
 
     if (transaction.stripe_payment_intent_id) {
@@ -621,9 +632,9 @@ async function orderStatus(userId, transactionIdInput) {
     [transactionId]
   );
   const transaction = rows[0];
-  if (!transaction) throw new TransactionError(404, "Order not found.");
+  if (!transaction) throw new TransactionError(404, "Order not found.", "orderNotFound");
   if (transaction.buyer_id !== userId && transaction.seller_id !== userId) {
-    throw new TransactionError(403, "Not your order.");
+    throw new TransactionError(403, "Not your order.", "notYourOrder");
   }
 
   return {

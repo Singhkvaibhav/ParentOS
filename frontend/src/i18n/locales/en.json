@@ -8,6 +8,11 @@
     "saving": "Saving...",
     "sending": "Sending..."
   },
+  "cookieConsent": {
+    "message": "We use analytics to understand how Uusiksi is used and improve it. This is off by default — nothing is tracked unless you accept.",
+    "accept": "Accept",
+    "decline": "Decline"
+  },
   "header": {
     "searchPlaceholder": "Search for clothes, toys, brands...",
     "searchAriaLabel": "Search for clothes, toys, brands",
@@ -61,7 +66,6 @@
     "loginToSell": "Log in to list an item."
   },
   "filters": {
-    "all": "All",
     "searchPlaceholder": "Search listings...",
     "anyCondition": "Any condition",
     "useMyLocation": "Use my location",

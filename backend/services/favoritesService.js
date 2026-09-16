@@ -2,9 +2,11 @@ const { query } = require("../db");
 const { parseId } = require("../utils/validation");
 
 class FavoriteError extends Error {
-  constructor(status, message) {
+  constructor(status, message, code = null, meta = null) {
     super(message);
     this.status = status;
+    this.code = code;
+    if (meta) this.meta = meta;
   }
 }
 
@@ -22,7 +24,7 @@ async function list(userId) {
 async function add(userId, listingIdInput) {
   const listingId = parseId(listingIdInput, "listingId", FavoriteError);
   const { rows } = await query("SELECT id FROM listings WHERE id = $1", [listingId]);
-  if (!rows[0]) throw new FavoriteError(404, "Listing not found.");
+  if (!rows[0]) throw new FavoriteError(404, "Listing not found.", "listingNotFound");
   await query("INSERT INTO favorites (user_id, listing_id) VALUES ($1, $2) ON CONFLICT DO NOTHING", [userId, listingId]);
 }
 

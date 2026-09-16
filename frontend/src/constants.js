@@ -113,3 +113,21 @@ export function sizeLabelFor(category) {
   if (category === "accessories") return "fits";
   return "size";
 }
+
+// Mirrors the CHECK constraint in migration 005. "safety" is first
+// deliberately - for a marketplace selling children's items, an unsafe or
+// recalled product is the report that matters most, and burying it under
+// spam would be the wrong default.
+//
+// Single source for both the reporter's dialog (ReportDialog.jsx) and the
+// moderator's queue (Moderation.jsx), which need the same id-to-label
+// mapping - previously duplicated as two separate literals that had no way
+// of being kept in sync.
+export const REPORT_REASONS = [
+  { id: "safety", key: "report.reasonSafety" },
+  { id: "prohibited", key: "report.reasonProhibited" },
+  { id: "misleading", key: "report.reasonMisleading" },
+  { id: "harassment", key: "report.reasonHarassment" },
+  { id: "spam", key: "report.reasonSpam" },
+  { id: "other", key: "report.reasonOther" },
+];

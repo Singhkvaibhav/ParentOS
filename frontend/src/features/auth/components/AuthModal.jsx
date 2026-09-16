@@ -25,7 +25,7 @@ export default function AuthModal({ initialView = "login", onClose, showToast })
       if (res.warning === "email-send-failed") showToast(t("auth.emailVerificationFailToast"));
       setView("verify");
     } catch (e) {
-      showToast(translateServerError(e.message, t));
+      showToast(translateServerError(e, t));
     } finally {
       setBusy(false);
     }
@@ -37,7 +37,7 @@ export default function AuthModal({ initialView = "login", onClose, showToast })
       await verify(email, code);
       onClose();
     } catch (e) {
-      showToast(translateServerError(e.message, t));
+      showToast(translateServerError(e, t));
     } finally {
       setBusy(false);
     }
@@ -49,7 +49,7 @@ export default function AuthModal({ initialView = "login", onClose, showToast })
       await login(email, password);
       onClose();
     } catch (e) {
-      showToast(translateServerError(e.message, t));
+      showToast(translateServerError(e, t));
     } finally {
       setBusy(false);
     }

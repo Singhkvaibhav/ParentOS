@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState, useCallback } from "rea
 import i18n from "../../../i18n";
 import { authService } from "../../../services/auth";
 import { isAbortError } from "../../../services/api";
+import { identify, resetIdentity, track } from "../../../productAnalytics";
 
 const AuthContext = createContext(null);
 
@@ -21,6 +22,7 @@ export function AuthProvider({ children }) {
       try {
         const { user } = await authService.me(controller.signal);
         setUser(user);
+        identify(user); // a returning visitor with a live session, not just a fresh login
       } catch (e) {
         if (!isAbortError(e)) setUser(null); // no valid cookie, or it expired - just means logged out
       } finally {
@@ -32,20 +34,29 @@ export function AuthProvider({ children }) {
   }, []);
 
   const signup = useCallback(
-    (name, email, password) => authService.signup(name, email, password, i18n.resolvedLanguage),
+    (name, email, password) => {
+      // The funnel step before "user_signed_up" (fired server-side, once
+      // verification actually succeeds - see authService.js) - captured
+      // here so a funnel can show the drop-off between the two.
+      track("signup_form_submitted");
+      return authService.signup(name, email, password, i18n.resolvedLanguage);
+    },
     []
   );
   const verify = useCallback(async (email, code) => {
     const { user } = await authService.verify(email, code);
     setUser(user);
+    identify(user);
   }, []);
   const login = useCallback(async (email, password) => {
     const { user } = await authService.login(email, password);
     setUser(user);
+    identify(user);
   }, []);
   const logout = useCallback(async () => {
     await authService.logout(); // clears the httpOnly cookie server-side - required now, not just a local state reset
     setUser(null);
+    resetIdentity();
   }, []);
 
   const value = { user, loading, signup, verify, login, logout };

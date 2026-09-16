@@ -2,9 +2,11 @@ const { query } = require("../db");
 const { summarize } = require("./trustService");
 
 class UserError extends Error {
-  constructor(status, message) {
+  constructor(status, message, code = null, meta = null) {
     super(message);
     this.status = status;
+    this.code = code;
+    if (meta) this.meta = meta;
   }
 }
 
@@ -21,7 +23,7 @@ async function getPublicProfile(id) {
     [id]
   );
   const user = rows[0];
-  if (!user) throw new UserError(404, "User not found.");
+  if (!user) throw new UserError(404, "User not found.", "userNotFound");
 
   const { rows: listingRows } = await query(
     "SELECT COUNT(*) AS n FROM listings WHERE seller_id = $1 AND moderated_at IS NULL",

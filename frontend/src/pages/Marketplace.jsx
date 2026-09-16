@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import SearchFilters from "../features/marketplace/components/SearchFilters";
@@ -26,6 +26,21 @@ export default function Marketplace({ showToast }) {
   const [authView, setAuthView] = useState(null);
 
   const { refLocation, locating, useMyLocation, setManualArea, clear } = useLocation(showToast);
+
+  // The header search box (App.jsx) navigates to `/marketplace?q=...` from
+  // anywhere, including while already on this page - which doesn't remount
+  // Marketplace, so `query`'s useState initializer (which only ever runs
+  // once) would otherwise keep showing results for whatever term was
+  // active before. Depends on the param's own string value, not the
+  // `searchParams` object itself - React Router hands back a new object on
+  // every render regardless of whether the URL changed, and keying off
+  // that would re-sync (and fight the user's own typing in the search box
+  // below, which updates `query` without touching the URL) on every
+  // unrelated re-render instead of only when a new search actually lands.
+  const urlQuery = searchParams.get("q") || "";
+  useEffect(() => {
+    setQuery(urlQuery);
+  }, [urlQuery]);
 
   const filters = useMemo(() => ({
     category: activeCategory,

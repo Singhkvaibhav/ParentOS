@@ -1,11 +1,14 @@
 const { query } = require("../db");
 const { parseId } = require("../utils/validation");
 const { STATUS, MONEY_CAPTURED, AWAITING_HANDOVER, CONCLUDED, REVERSED, sqlList } = require("../transactionStatus");
+const { PAYOUT_READY_SQL } = require("./connectService");
 
 class AnalyticsError extends Error {
-  constructor(status, message) {
+  constructor(status, message, code = null, meta = null) {
     super(message);
     this.status = status;
+    this.code = code;
+    if (meta) this.meta = meta;
   }
 }
 
@@ -81,10 +84,10 @@ async function listingStats(listingId, requesterId) {
   const id = parseId(listingId, "listingId", AnalyticsError);
   const { rows } = await query("SELECT seller_id, view_count FROM listings WHERE id = $1", [id]);
   const listing = rows[0];
-  if (!listing) throw new AnalyticsError(404, "Listing not found.");
+  if (!listing) throw new AnalyticsError(404, "Listing not found.", "listingNotFound");
   // Per-listing performance is the seller's business, not public - it
   // would otherwise let anyone measure a competitor's demand.
-  if (listing.seller_id !== requesterId) throw new AnalyticsError(403, "Not your listing.");
+  if (listing.seller_id !== requesterId) throw new AnalyticsError(403, "Not your listing.", "notYourListing");
 
   const { rows: recent } = await query(
     `SELECT COUNT(*) AS views_last_7_days
@@ -107,7 +110,7 @@ async function listingStats(listingId, requesterId) {
 
 async function requireAdmin(userId) {
   const { rows } = await query("SELECT is_admin FROM users WHERE id = $1", [userId]);
-  if (!rows[0]?.is_admin) throw new AnalyticsError(403, "Moderator access required.");
+  if (!rows[0]?.is_admin) throw new AnalyticsError(403, "Moderator access required.", "moderatorRequired");
 }
 
 // Marketplace health. The metrics are chosen to answer "is this working?"
@@ -121,7 +124,7 @@ async function platformStats(adminId) {
              COUNT(*) AS total,
              COUNT(*) FILTER (WHERE verified) AS verified,
              COUNT(*) FILTER (WHERE created_at > now() - interval '30 days') AS new_last_30_days,
-             COUNT(*) FILTER (WHERE connect_charges_enabled) AS payout_ready
+             COUNT(*) FILTER (WHERE ${PAYOUT_READY_SQL}) AS payout_ready
            FROM users`),
     query(`SELECT
              COUNT(*) AS total,

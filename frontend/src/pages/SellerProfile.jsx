@@ -7,6 +7,7 @@ import { listingsService } from "../services/listings";
 import TrustBadge from "../features/profile/components/TrustBadge";
 import ListingGrid from "../features/listings/components/ListingGrid";
 import { translateServerError } from "../i18n/errorMessages";
+import { useDocumentTitle } from "../hooks/useDocumentTitle";
 
 // The "Seller profile" node in the user journey: a buyer deciding whether
 // to deal with someone needs to see who they are, what else they're
@@ -25,7 +26,7 @@ export default function SellerProfile() {
 
     usersService.publicProfile(id)
       .then((d) => { if (!cancelled) setProfile(d.user); })
-      .catch((e) => { if (!cancelled) setError(translateServerError(e.message, t)); });
+      .catch((e) => { if (!cancelled) setError(translateServerError(e, t)); });
 
     reviewsService.listForUser(id)
       .then((d) => { if (!cancelled) setReviews(d.reviews); })
@@ -44,6 +45,8 @@ export default function SellerProfile() {
 
     return () => { cancelled = true; };
   }, [id, t]);
+
+  useDocumentTitle(profile?.name);
 
   if (error) return <p className="muted p-6">{error}</p>;
   if (!profile) return <p className="muted p-6">{t("common.loading")}</p>;

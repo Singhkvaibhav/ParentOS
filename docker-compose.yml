@@ -66,6 +66,13 @@ services:
       # network can scrape it. The container's network namespace is the
       # boundary; the port is never published to the host.
       METRICS_HOST: 0.0.0.0
+      # Points seo/render.js at the mount below. The module's own default
+      # (../../frontend/dist relative to the backend source) only resolves
+      # correctly on a local checkout where both repos sit side by side -
+      # inside this container the backend lives at /app with no sibling
+      # frontend directory at all, so without this it would silently fall
+      # back to the no-SPA-takeover shell on every request.
+      FRONTEND_DIST_DIR: /app/frontend-dist
     depends_on:
       postgres:
         condition: service_healthy
@@ -85,6 +92,15 @@ services:
       # why object storage is the real answer (the app warns about this at
       # startup when S3_BUCKET is unset).
       - api-uploads:/app/uploads
+      # Same build the proxy serves (see the proxy service above), mounted
+      # read-only here too: seo/render.js reads its index.html to inject
+      # per-listing meta tags, so a crawler/link-preview bot hitting
+      # /listing/:id gets the real page title and Open Graph tags instead
+      # of the one static shell every route otherwise shares. Reusing the
+      # actual built file (rather than reconstructing the shell here) means
+      # this never drifts out of sync with the frontend's real script/link
+      # tags, which change hash on every build.
+      - ./frontend/dist:/app/frontend-dist:ro
 
   worker:
     build:
@@ -152,6 +168,13 @@ services:
     environment:
       DATABASE_URL: postgres://parentos:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/parentos
       BACKUP_DIR: /backups
+      # Offsite copy - see scripts/backup.sh and .env.production.example.
+      # All empty/unset by default: offsite storage is opt-in, not assumed.
+      BACKUP_S3_BUCKET: ${BACKUP_S3_BUCKET:-}
+      BACKUP_S3_REGION: ${BACKUP_S3_REGION:-}
+      BACKUP_S3_ACCESS_KEY_ID: ${BACKUP_S3_ACCESS_KEY_ID:-}
+      BACKUP_S3_SECRET_ACCESS_KEY: ${BACKUP_S3_SECRET_ACCESS_KEY:-}
+      BACKUP_S3_ENDPOINT: ${BACKUP_S3_ENDPOINT:-}
     volumes:
       - ./scripts/backup.sh:/usr/local/bin/backup.sh:ro
       - backups:/backups
@@ -160,7 +183,11 @@ services:
         condition: service_healthy
     # The script verifies every dump and exits non-zero on failure, so a
     # bad backup is visible in container logs instead of failing silently.
-    entrypoint: sh -c 'apk add --no-cache bash >/dev/null; while :; do bash /usr/local/bin/backup.sh || echo "BACKUP FAILED"; sleep 86400; done'
+    # aws-cli is only needed for the offsite-copy step above - installed
+    # unconditionally rather than made conditional on BACKUP_S3_BUCKET,
+    # since that's set via docker-compose env (not known at image-build
+    # time) and the install itself is cheap relative to a daily backup run.
+    entrypoint: sh -c 'apk add --no-cache bash aws-cli >/dev/null; while :; do bash /usr/local/bin/backup.sh || echo "BACKUP FAILED"; sleep 86400; done'
 
 volumes:
   postgres-data:

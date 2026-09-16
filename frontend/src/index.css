@@ -9,6 +9,7 @@
   --berry: #A63D2C;
   --stone: #8C8468;
   --stone-light: #DCD6C4;
+  --focus-ring: 0 0 0 3px rgba(51, 81, 63, 0.12);
 }
 
 * { box-sizing: border-box; }
@@ -82,7 +83,7 @@ body { margin: 0; }
 .header-search:focus-within {
   background: var(--card);
   border-color: var(--moss-dark);
-  box-shadow: 0 0 0 3px rgba(51, 81, 63, 0.12);
+  box-shadow: var(--focus-ring);
 }
 
 .header-search svg {
@@ -361,11 +362,11 @@ body { margin: 0; }
 
 .filter-row { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 1.5rem; align-items: center; }
 .search-box { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 1rem; border-radius: 999px; border: 1px solid var(--stone-light); background: var(--card); flex: 1; min-width: 12rem; transition: border-color .15s ease, box-shadow .15s ease; }
-.search-box:focus-within { border-color: var(--moss); box-shadow: 0 0 0 3px rgba(51, 81, 63, 0.12); }
+.search-box:focus-within { border-color: var(--moss); box-shadow: var(--focus-ring); }
 .search-input { border: none; outline: none; background: transparent; font-size: 0.875rem; flex: 1; }
 .select { padding: 0.5rem 1rem; border-radius: 999px; border: 1px solid var(--stone-light); background: var(--card); font-size: 0.875rem; cursor: pointer; transition: border-color .15s ease, box-shadow .15s ease; }
 .select:hover { border-color: var(--stone); }
-.select:focus-visible { outline: none; border-color: var(--moss); box-shadow: 0 0 0 3px rgba(51, 81, 63, 0.12); }
+.select:focus-visible { outline: none; border-color: var(--moss); box-shadow: var(--focus-ring); }
 .select-full { width: 100%; border-radius: 0.75rem; }
 
 /* Listing grid/cards */
@@ -435,7 +436,7 @@ body { margin: 0; }
 .form-stack > * + * { margin-top: 0.75rem; }
 .field-label { font-size: 0.75rem; font-weight: 500; color: var(--stone); margin-bottom: 0.25rem; }
 .input { width: 100%; padding: 0.5rem 0.75rem; border-radius: 0.75rem; border: 1px solid var(--stone-light); background: var(--card); font-size: 0.875rem; outline: none; transition: border-color .15s ease, box-shadow .15s ease; }
-.input:focus { border-color: var(--moss); box-shadow: 0 0 0 3px rgba(51, 81, 63, 0.12); }
+.input:focus { border-color: var(--moss); box-shadow: var(--focus-ring); }
 .input-disabled { color: var(--stone); }
 .textarea { resize: none; }
 .two-col { display: flex; gap: 0.75rem; }
@@ -491,6 +492,25 @@ body { margin: 0; }
 .unread-dot { display: inline-flex; align-items: center; justify-content: center; min-width: 1.1rem; height: 1.1rem; padding: 0 0.3rem; border-radius: 999px; background: var(--berry); color: var(--card); font-size: 0.65rem; font-weight: 600; margin-left: 0.4rem; }
 
 .toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); padding: 0.6rem 1rem; border-radius: 999px; font-size: 0.875rem; background: var(--moss-dark); color: var(--paper); z-index: 60; }
+
+.cookie-consent {
+  position: fixed;
+  left: 1rem;
+  right: 1rem;
+  bottom: 1rem;
+  max-width: 28rem;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem 1.25rem;
+  border-radius: 12px;
+  background: var(--paper);
+  border: 1px solid var(--moss-dark);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  z-index: 70;
+}
+.cookie-consent-actions { display: flex; justify-content: flex-end; gap: 0.5rem; }
 
 /* Checkout confirmation - the "payment received" line should read as a
    clear success state, not just another paragraph of text. */

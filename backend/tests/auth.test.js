@@ -19,6 +19,9 @@ describe("auth", () => {
   });
 
   test("signup then verify with the dev code sets an httpOnly session cookie", async () => {
+    const productAnalytics = require("../services/productAnalyticsService");
+    const captureSpy = jest.spyOn(productAnalytics, "capture");
+
     const { agent, user } = await createVerifiedUser(app, { email: "verifyflow@example.com" });
     expect(user.email).toBe("verifyflow@example.com");
     expect(user.id).toBeDefined();
@@ -28,6 +31,11 @@ describe("auth", () => {
     const me = await agent.get("/api/auth/me");
     expect(me.status).toBe(200);
     expect(me.body.user.id).toBe(user.id);
+
+    // Verification succeeding, not the signup form being submitted, is the
+    // authoritative "signed up" funnel event - see productAnalyticsService.js.
+    expect(captureSpy).toHaveBeenCalledWith(user.id, "user_signed_up");
+    captureSpy.mockRestore();
   });
 
   test("verify locks out after 5 wrong attempts", async () => {

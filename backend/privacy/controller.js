@@ -1,7 +1,7 @@
 const privacyService = require("../services/privacyService");
 
 function handleServiceError(res, e) {
-  if (e instanceof privacyService.PrivacyError) return res.status(e.status).json({ error: e.message });
+  if (e instanceof privacyService.PrivacyError) return res.status(e.status).json({ error: e.message, code: e.code });
   throw e;
 }
 

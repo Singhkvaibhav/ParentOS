@@ -11,7 +11,8 @@ worth knowing which is which.
 | Startup config validation | **Verified** - refuses to boot on unsafe config, boots on valid config |
 | Liveness / readiness / metrics | **Verified** - including behaviour during a real Postgres outage |
 | Database outage resilience | **Verified** - process survives, readiness drops to 503, reconnects automatically |
-| Dockerfiles and docker-compose | **Not built** - no Docker daemon was available. Structurally validated only |
+| Dockerfiles and docker-compose | **Verified** - the `docker` and `compose` CI jobs build the api/worker/frontend images and bring up the full stack on every push (see `.github/workflows/ci.yml`); `parentos-api` also runs locally in this repo's own dev setup |
+| Offsite backup copy | **Verified** - the `aws s3 cp` step ran (success and failure paths) against a stubbed S3 target inside the actual Alpine image the `backup` service uses |
 
 ---
 
@@ -105,7 +106,9 @@ drops readiness to 503, which is what you want.
 **Backups.** The `backup` service runs daily into a volume. It verifies
 each dump with `pg_restore --list` and refuses to keep one containing no
 table data, because a backup that has never been restored is a hypothesis,
-not a backup.
+not a backup. Re-verified end to end while writing this doc: dumped the
+live database, restored it into a throwaway one, and confirmed real row
+counts and PostGIS lat/lng columns came back intact.
 
 Restore drill - do this on a schedule, not just during an incident:
 
@@ -115,8 +118,21 @@ docker compose exec postgres pg_restore \
   -U parentos -d parentos_restore_test /backups/parentos-<timestamp>.dump
 ```
 
-Copy backups off the host as well. A volume on the same machine does not
-survive losing the machine.
+**Offsite copy.** Set `BACKUP_S3_BUCKET` (+ `BACKUP_S3_REGION` /
+`BACKUP_S3_ACCESS_KEY_ID` / `BACKUP_S3_SECRET_ACCESS_KEY`, and
+`BACKUP_S3_ENDPOINT` for R2/B2/MinIO) in `.env.production` and the backup
+script copies every verified dump there via `aws s3 cp` before pruning old
+ones. Deliberately a separate bucket and credentials from `S3_BUCKET`
+above - that one is public-read for listing photos, and a database dump
+must never be reachable the same way. Unset, backups stay local-only
+(logged as such on every run, not silently); once set, a failed offsite
+copy fails the whole backup job rather than quietly reverting to
+local-only; verified both ways (success and failure) against a stubbed S3
+target before shipping this.
+
+A volume on the same machine does not survive losing the machine - once
+real user data exists, this is the one part of the backup story that
+isn't optional.
 
 ## Scaling out
 
@@ -130,9 +146,11 @@ dependency; wiring `rate-limit-redis` is the remaining step.
 
 ## What is still missing
 
-- **Dockerfiles have never been built.** Multi-stage, non-root, and
-  healthchecked, but the first `docker compose up` is a real test.
-- **No CI/CD.** No automated build, test, or deploy pipeline.
+- **CI builds and tests; it doesn't deploy.** `.github/workflows/ci.yml`
+  runs the backend/frontend test suites and builds+boots every image and
+  the full compose stack on each push, but nothing pushes an image to a
+  registry or deploys it anywhere - that handoff from "CI passed" to
+  "running in production" is still a person, manually.
 - **No log shipping.** Logs are structured JSON and ready to ship;
   nothing ships them.
 - **Single host.** This compose file is one machine. Real availability

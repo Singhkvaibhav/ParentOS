@@ -1,22 +1,27 @@
 const { query } = require("../db");
 const { parseId } = require("../utils/validation");
 const { sendNotificationEmail } = require("../email");
+const { sendPush } = require("./pushService");
 const logger = require("../logger");
 const { BRAND } = require("../config");
 
 class NotificationError extends Error {
-  constructor(status, message) {
+  constructor(status, message, code = null, meta = null) {
     super(message);
     this.status = status;
+    this.code = code;
+    if (meta) this.meta = meta;
   }
 }
 
 const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 
-// Creates a notification and, if the recipient hasn't opted out, emails
-// it. Deliberately fire-and-forget from the caller's perspective (see
-// notify() below): a marketplace action must never fail because a
-// notification couldn't be delivered.
+// Creates a notification and delivers it over whichever of the two
+// out-of-app channels apply - push if the user has a registered device
+// (see pushService.js), email if they haven't opted out. Deliberately
+// fire-and-forget from the caller's perspective (see notify() below): a
+// marketplace action must never fail because a notification couldn't be
+// delivered.
 async function create({ userId, type, title, body, listingId = null, conversationId = null }) {
   const { rows } = await query(
     `INSERT INTO notifications (user_id, type, title, body, listing_id, conversation_id)
@@ -24,6 +29,14 @@ async function create({ userId, type, title, body, listingId = null, conversatio
     [userId, type, title, body || null, listingId, conversationId]
   );
   const notification = rows[0];
+
+  // Independent of the email path below - a user might have push enabled
+  // and email off, or the reverse, so neither gates the other. sendPush
+  // already swallows its own delivery failures; this catch is only for
+  // something failing before that point (e.g. the token lookup itself).
+  sendPush(userId, { title, body, data: { type, listingId, conversationId, notificationId: notification.id } }).catch((e) =>
+    logger.warn("push_notify_failed", { userId, type, err: e })
+  );
 
   const { rows: userRows } = await query(
     "SELECT email, name, email_notifications FROM users WHERE id = $1",
@@ -80,7 +93,7 @@ async function markRead(userId, notificationIdInput) {
   );
   if (rowCount === 0) {
     const { rows } = await query("SELECT 1 FROM notifications WHERE id = $1 AND user_id = $2", [notificationId, userId]);
-    if (!rows[0]) throw new NotificationError(404, "Notification not found.");
+    if (!rows[0]) throw new NotificationError(404, "Notification not found.", "notificationNotFound");
   }
 }
 

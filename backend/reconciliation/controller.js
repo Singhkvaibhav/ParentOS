@@ -2,7 +2,7 @@ const reconciliationService = require("../services/reconciliationService");
 
 function handleServiceError(res, e) {
   if (e instanceof reconciliationService.ReconciliationError) {
-    return res.status(e.status).json({ error: e.message });
+    return res.status(e.status).json({ error: e.message, code: e.code });
   }
   throw e;
 }

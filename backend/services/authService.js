@@ -65,11 +65,11 @@ function publicUser(user) {
 
 async function signup({ name, email, password, locale }) {
   if (!name?.trim() || !email?.trim() || !password || password.length < 6) {
-    throw new AuthError(400, "Name, email and a password (6+ characters) are required.");
+    throw new AuthError(400, "Name, email and a password (6+ characters) are required.", { code: "signupFieldsRequired" });
   }
   const normalizedEmail = email.trim().toLowerCase();
   const existing = await query("SELECT id FROM users WHERE email = $1", [normalizedEmail]);
-  if (existing.rows.length > 0) throw new AuthError(409, "An account with that email already exists.");
+  if (existing.rows.length > 0) throw new AuthError(409, "An account with that email already exists.", { code: "emailInUse" });
 
   // The frontend's current UI language at signup time - not user input in
   // the security sense, but normalized against the supported set anyway so
@@ -105,8 +105,8 @@ async function signup({ name, email, password, locale }) {
 async function resendCode({ email }) {
   const { rows } = await query("SELECT * FROM users WHERE email = $1", [(email || "").toLowerCase()]);
   const user = rows[0];
-  if (!user) throw new AuthError(404, "No account with that email.");
-  if (user.verified) throw new AuthError(400, "Already verified — log in instead.");
+  if (!user) throw new AuthError(404, "No account with that email.", { code: "noAccountWithEmail" });
+  if (user.verified) throw new AuthError(400, "Already verified — log in instead.", { code: "alreadyVerified" });
 
   const code = generateCode();
   const codeHash = await hashCode(code);
@@ -132,8 +132,8 @@ async function resendCode({ email }) {
 async function verify({ email, code }) {
   const { rows } = await query("SELECT * FROM users WHERE email = $1", [(email || "").toLowerCase()]);
   const user = rows[0];
-  if (!user) throw new AuthError(404, "No account with that email.");
-  if (user.verified) throw new AuthError(400, "Already verified — log in instead.");
+  if (!user) throw new AuthError(404, "No account with that email.", { code: "noAccountWithEmail" });
+  if (user.verified) throw new AuthError(400, "Already verified — log in instead.", { code: "alreadyVerified" });
 
   // (P1 #4) Atomically claim an attempt BEFORE checking the code. The
   // previous read-then-write let concurrent guesses all pass the limit
@@ -151,17 +151,17 @@ async function verify({ email, code }) {
     [user.id, MAX_VERIFY_ATTEMPTS]
   );
   if (claim.rowCount === 0) {
-    throw new AuthError(429, "Too many attempts — request a new code.", { locked: true });
+    throw new AuthError(429, "Too many attempts — request a new code.", { locked: true, code: "tooManyCodeAttempts" });
   }
   if (!user.verification_expires_at || new Date(user.verification_expires_at) < new Date()) {
-    throw new AuthError(400, "That code has expired — request a new one.", { expired: true });
+    throw new AuthError(400, "That code has expired — request a new one.", { expired: true, code: "codeExpired" });
   }
   if (!(await bcrypt.compare(String(code).trim(), user.verification_code || ""))) {
     // The attempt was already counted by the atomic claim above - counting
     // it again here would halve the real allowance.
     const { rows: attemptRows } = await query("SELECT verification_attempts FROM users WHERE id = $1", [user.id]);
     const remaining = MAX_VERIFY_ATTEMPTS - Number(attemptRows[0]?.verification_attempts ?? MAX_VERIFY_ATTEMPTS);
-    throw new AuthError(400, "That code doesn't match.", { attemptsRemaining: Math.max(remaining, 0) });
+    throw new AuthError(400, "That code doesn't match.", { attemptsRemaining: Math.max(remaining, 0), code: "codeMismatch" });
   }
 
   await query(
@@ -170,6 +170,13 @@ async function verify({ email, code }) {
   );
   const { rows: updatedRows } = await query("SELECT * FROM users WHERE id = $1", [user.id]);
   const updated = updatedRows[0];
+
+  // The authoritative "signed up" moment for the funnel - captured here,
+  // not client-side, since this is the point a server confirms it (see
+  // productAnalyticsService.js for why the client/server split is drawn
+  // this way).
+  require("./productAnalyticsService").capture(updated.id, "user_signed_up");
+
   return { token: signToken(updated), user: publicUser(updated) };
 }
 
@@ -191,7 +198,7 @@ async function login({ email, password }, context = {}) {
   } catch (e) {
     if (e instanceof AccountSecurityError) {
       await recordLogin({ userId: user?.id, email: normalizedEmail, outcome: "locked", ...context });
-      throw new AuthError(e.status, e.message);
+      throw new AuthError(e.status, e.message, { code: e.code });
     }
     throw e;
   }
@@ -209,10 +216,10 @@ async function login({ email, password }, context = {}) {
       userId: user?.id, email: normalizedEmail,
       outcome: user ? "bad_password" : "unknown_email", ...context,
     });
-    throw new AuthError(401, "Invalid email or password.");
+    throw new AuthError(401, "Invalid email or password.", { code: "invalidCredentials" });
   }
 
-  if (!user.verified) throw new AuthError(403, "Verify your email first.", { needsVerification: true });
+  if (!user.verified) throw new AuthError(403, "Verify your email first.", { needsVerification: true, code: "verifyEmailFirst" });
 
   const suspicious = await isSuspiciousLogin(user.id, context.ip);
   await clearFailedLogins(user.id);
@@ -240,13 +247,13 @@ async function logoutEverywhere(userId) {
     [userId]
   );
   const user = rows[0];
-  if (!user) throw new AuthError(404, "User not found.");
+  if (!user) throw new AuthError(404, "User not found.", { code: "userNotFound" });
   return { token: signToken(user), user: publicUser(user) };
 }
 
 async function getById(id) {
   const { rows } = await query("SELECT * FROM users WHERE id = $1", [id]);
-  if (!rows[0]) throw new AuthError(404, "User not found.");
+  if (!rows[0]) throw new AuthError(404, "User not found.", { code: "userNotFound" });
   return publicUser(rows[0]);
 }
 

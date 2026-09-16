@@ -61,7 +61,14 @@ step "End-to-end test (real server, real database, real Stripe SDK)"
 createdb_out=$(psql "${E2E_ADMIN_URL:-$DATABASE_URL}" \
   -c "DROP DATABASE IF EXISTS parentos_e2e;" -c "CREATE DATABASE parentos_e2e;" 2>&1) \
   || fail "could not create the e2e database: $createdb_out"
-(cd "$ROOT/backend" && npm run --silent e2e) || fail "end-to-end test"
+# e2e.js falls back to TEST_DATABASE_URL when E2E_DATABASE_URL isn't set -
+# without this, the freshly created (empty) parentos_e2e database above
+# goes unused and the e2e run instead hits parentos_test, already dirtied
+# by the "Backend tests" step just before it. Same host/credentials as
+# DATABASE_URL, database name swapped for the one just created.
+E2E_DATABASE_URL="${E2E_ADMIN_URL:-$DATABASE_URL}"
+E2E_DATABASE_URL="${E2E_DATABASE_URL%/*}/parentos_e2e"
+(cd "$ROOT/backend" && E2E_DATABASE_URL="$E2E_DATABASE_URL" npm run --silent e2e) || fail "end-to-end test"
 
 step "Smoke test against a real running server"
 # Checked before starting the server so a missing .env produces the actual

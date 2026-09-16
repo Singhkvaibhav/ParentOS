@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { X, MapPin, MessageCircle, CheckCircle2, Heart, ShoppingBag, Flag } from "lucide-react";
@@ -10,11 +10,20 @@ import ReportDialog from "../../moderation/components/ReportDialog";
 import TrustBadge from "../../profile/components/TrustBadge";
 import { useBuyerThread } from "../../messaging/hooks/useMessages";
 import { useAuth } from "../../auth/hooks/useAuth";
+import { track } from "../../../productAnalytics";
 
+// The one component both the marketplace grid (Marketplace.jsx) and the
+// deep-link page (pages/Listing.jsx) render a listing's detail view
+// through - instrumenting the view event here, rather than in either
+// caller, captures it regardless of which way someone arrived.
 export default function ListingDetails({ listing, onClose, showToast, onRequireLogin, favorites }) {
   const { t } = useTranslation();
   const { user } = useAuth();
   const { conversation, send, aiTyping } = useBuyerThread(listing.id, !!user);
+
+  useEffect(() => {
+    track("listing_viewed", { listingId: listing.id, category: listing.category });
+  }, [listing.id, listing.category]);
   const [showCheckout, setShowCheckout] = useState(false);
   const [showReport, setShowReport] = useState(false);
   const Icon = categoryMeta(listing.category).icon;

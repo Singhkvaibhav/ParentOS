@@ -14,21 +14,29 @@ export default function SearchFilters({
   const { t } = useTranslation();
   // Browsing is a read path, so it tolerates the degraded fallback: a
   // stale filter value just returns nothing, it can't corrupt anything.
-  const { categories, conditions } = useMarketplaceConfig();
+  const { categories, conditions, subcategoriesByCategory } = useMarketplaceConfig();
+
+  // The category dropdown used to sit next to a full row of quick-pick
+  // pills (All / Clothes / Accessories / Toys) that did the exact same
+  // job - pick a top-level category - as a second, separate control. Now
+  // there's one way to choose a category (the dropdown) and one place
+  // that shows what's currently chosen: this chip, which doubles as the
+  // "clear" affordance the pill row's active-highlight used to provide.
+  const activeCategoryMeta = categories.find((c) => c.id === activeCategory);
 
   return (
     <div>
       <div className="pill-row mb-4">
-        <CategoryMenu onSelect={onSelectCategory} />
-        {[{ id: "all", label: t("filters.all"), icon: null }, ...categories].map((cat) => {
-          const active = activeCategory === cat.id;
-          const label = cat.id === "all" ? cat.label : t(`categories.${cat.id}`, { defaultValue: cat.label });
-          return (
-            <button key={cat.id} onClick={() => onSelectCategory(cat.id, null)} className={`pill pill-toggle ${active ? "pill-active" : ""}`}>
-              {cat.icon && <cat.icon size={14} />}{label}
+        <CategoryMenu categories={categories} subcategoriesByCategory={subcategoriesByCategory} onSelect={onSelectCategory} />
+        {activeCategoryMeta && (
+          <span className="pill pill-active active-subcategory-pill">
+            {activeCategoryMeta.icon && <activeCategoryMeta.icon size={14} />}
+            {t(`categories.${activeCategoryMeta.id}`, { defaultValue: activeCategoryMeta.label })}
+            <button type="button" onClick={() => onSelectCategory("all", null)} aria-label={t("filters.clear")}>
+              <X size={12} />
             </button>
-          );
-        })}
+          </span>
+        )}
         {subcategoryFilter && subcategoryFilter !== "all" && (
           <span className="pill pill-active active-subcategory-pill">
             {t(`subcategories.${activeCategory}.${subcategoryFilter}`, {

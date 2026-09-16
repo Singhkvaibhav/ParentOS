@@ -4,7 +4,7 @@ const { recordListingView } = require("../services/analyticsService");
 const logger = require("../logger");
 
 function handleServiceError(res, e) {
-  if (e instanceof listingsService.ListingError) return res.status(e.status).json({ error: e.message });
+  if (e instanceof listingsService.ListingError) return res.status(e.status).json({ error: e.message, code: e.code });
   throw e;
 }
 

@@ -30,9 +30,10 @@
     "helmet": "^8.3.0",
     "ioredis": "^6.0.0",
     "jsonwebtoken": "^9.0.2",
-    "nodemailer": "^6.9.15",
+    "nodemailer": "^10.0.10",
     "pg": "^8.13.0",
-    "sharp": "^0.33.5",
+    "posthog-node": "^5.52.4",
+    "sharp": "^0.35.4",
     "stripe": "^16.9.0"
   },
   "devDependencies": {

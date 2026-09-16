@@ -3,7 +3,23 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Uusiksi - ParentOS</title>
+    <title>Uusiksi - buy and sell second-hand kids gear</title>
+    <meta name="description" content="Uusiksi is a marketplace for second-hand baby and kids gear - clothes, toys and accessories that grow-out-of fast and shouldn't go to waste." />
+    <!--
+      Baseline Open Graph/Twitter tags so every page that ISN'T a listing
+      (home, marketplace, a seller's profile) still gets a real link
+      preview instead of nothing. A listing's own page overrides all of
+      this server-side with the actual item's title/photo - see
+      backend/seo/routes.js and render.js, which inject exact replacements
+      for <title> and every og:/twitter: tag below before this file ever
+      reaches a crawler for /listing/:id specifically.
+    -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Uusiksi" />
+    <meta property="og:title" content="Uusiksi - buy and sell second-hand kids gear" />
+    <meta property="og:description" content="Second-hand baby and kids gear, bought and sold locally." />
+    <meta property="og:image" content="/images/hero-nursery.jpg" />
+    <meta name="twitter:card" content="summary_large_image" />
   </head>
   <body>
     <div id="root"></div>

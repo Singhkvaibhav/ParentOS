@@ -50,6 +50,7 @@ const notificationsRoutes = require("./notifications/routes");
 const analyticsRoutes = require("./analytics/routes");
 const reconciliationRoutes = require("./reconciliation/routes");
 const privacyRoutes = require("./privacy/routes");
+const seoRoutes = require("./seo/routes");
 
 const app = express();
 
@@ -91,10 +92,19 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      // Stripe.js must load from Stripe and runs its card form in an iframe.
-      scriptSrc: ["'self'", "https://js.stripe.com"],
+      // Stripe.js must load from Stripe and runs its card form in an
+      // iframe. PostHog (frontend/src/productAnalytics.js) is optional -
+      // these entries are inert if VITE_POSTHOG_KEY is never set, since
+      // nothing would try to reach them - but must be present for when it
+      // is, since posthog-js loads its session-recording extension from a
+      // separate assets subdomain via an injected <script> tag rather than
+      // bundling it. Wildcarded (not a specific subdomain) because that
+      // subdomain is PostHog's own detail to change; matches their
+      // documented CSP guidance. Using a self-hosted PostHog instead of
+      // the default cloud host means updating these to match it.
+      scriptSrc: ["'self'", "https://js.stripe.com", "https://*.posthog.com"],
       frameSrc: ["'self'", "https://js.stripe.com", "https://hooks.stripe.com"],
-      connectSrc: ["'self'", "https://api.stripe.com"],
+      connectSrc: ["'self'", "https://api.stripe.com", "https://*.posthog.com"],
       // Listing photos are served from this origin, but data: URIs are
       // used for previews before upload completes.
       imgSrc: ["'self'", "data:", "blob:"],
@@ -193,6 +203,12 @@ app.use("/api/analytics", analyticsRoutes);
 app.use("/api/reconciliation", reconciliationRoutes);
 app.use("/api/privacy", privacyRoutes);
 
+// Not under /api: crawlers and link-preview bots expect robots.txt and a
+// listing's own URL at the site root, not namespaced under the JSON API.
+// See seo/routes.js and the matching nginx location blocks that route
+// exactly these paths here instead of to the static SPA build.
+app.use(seoRoutes);
+
 // Liveness: is this process alive at all? Deliberately does NOT touch the
 // database. A liveness probe that checks dependencies is a well-known
 // outage amplifier: a brief database blip makes every instance report
@@ -281,6 +297,9 @@ if (require.main === module) {
     logger.info("shutdown_started", { signal });
     server.close(async () => {
       await pool.end().catch(() => {});
+      // posthog-node batches events in memory - exiting without this can
+      // drop whatever was captured in the last few seconds before a deploy.
+      await require("./services/productAnalyticsService").shutdown();
       logger.info("shutdown_complete", { signal });
       process.exit(0);
     });

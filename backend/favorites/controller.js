@@ -10,7 +10,7 @@ async function add(req, res) {
     await favoritesService.add(req.user.id, req.body.listingId);
     res.status(201).json({ ok: true });
   } catch (e) {
-    if (e instanceof favoritesService.FavoriteError) return res.status(e.status).json({ error: e.message });
+    if (e instanceof favoritesService.FavoriteError) return res.status(e.status).json({ error: e.message, code: e.code });
     throw e;
   }
 }

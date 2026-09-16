@@ -5,9 +5,11 @@ const { CONCLUDED, sqlList } = require("../transactionStatus");
 const { refreshRatingAggregates } = require("./trustService");
 
 class ReviewError extends Error {
-  constructor(status, message) {
+  constructor(status, message, code = null, meta = null) {
     super(message);
     this.status = status;
+    this.code = code;
+    if (meta) this.meta = meta;
   }
 }
 
@@ -33,7 +35,7 @@ async function create(reviewerId, { revieweeId: revieweeIdInput, listingId: list
   }
   const revieweeId = parseId(revieweeIdInput, "revieweeId", ReviewError);
   const listingId = parseId(listingIdInput, "listingId", ReviewError);
-  if (revieweeId === reviewerId) throw new ReviewError(400, "You can't review yourself.");
+  if (revieweeId === reviewerId) throw new ReviewError(400, "You can't review yourself.", "cantReviewYourself");
 
   // Requires status = 'completed', not merely 'paid'. The same distinction
   // the trust counters now make: payment succeeding doesn't mean the deal
@@ -58,7 +60,7 @@ async function create(reviewerId, { revieweeId: revieweeIdInput, listingId: list
     [listingId, reviewerId, revieweeId]
   );
   if (!rows[0]) {
-    throw new ReviewError(403, "You can only review someone once the order is complete - the buyer needs to confirm they received the item first.");
+    throw new ReviewError(403, "You can only review someone once the order is complete - the buyer needs to confirm they received the item first.", "reviewNeedsCompletion");
   }
 
   try {
@@ -67,7 +69,7 @@ async function create(reviewerId, { revieweeId: revieweeIdInput, listingId: list
       [reviewerId, revieweeId, listingId, Number(rating), comment || null]
     );
   } catch (e) {
-    if (e.code === "23505") throw new ReviewError(409, "You've already reviewed this person for this listing."); // unique_violation
+    if (e.code === "23505") throw new ReviewError(409, "You've already reviewed this person for this listing.", "alreadyReviewed"); // unique_violation
     throw e;
   }
 

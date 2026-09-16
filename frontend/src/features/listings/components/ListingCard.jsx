@@ -24,7 +24,11 @@ export default function ListingCard({ listing, onClick, favorited, onToggleFavor
       <button type="button" onClick={onClick} className="listing-card-clickarea">
         <div className="listing-card-image">
           {listing.photo_url ? (
-            <img src={listing.photo_url} alt={listing.title} />
+            // The grid renders many of these at once - the ~400px thumbnail
+            // is what keeps that cheap on mobile data. Older listings (or
+            // ones where thumbnail generation failed) have no
+            // photo_thumb_url and fall back to the full-size photo.
+            <img src={listing.photo_thumb_url || listing.photo_url} alt={listing.title} loading="lazy" />
           ) : (
             <CategoryIcon category={listing.category} />
           )}

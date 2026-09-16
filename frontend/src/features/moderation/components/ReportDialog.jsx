@@ -3,19 +3,7 @@ import { useTranslation } from "react-i18next";
 import { X, Flag } from "lucide-react";
 import { moderationService } from "../../../services/moderation";
 import { translateServerError } from "../../../i18n/errorMessages";
-
-// Reasons mirror the CHECK constraint in migration 005. "safety" is first
-// deliberately - for a marketplace selling children's items, an unsafe or
-// recalled product is the report that matters most, and burying it under
-// spam would be the wrong default.
-const REASONS = [
-  { id: "safety", key: "report.reasonSafety" },
-  { id: "prohibited", key: "report.reasonProhibited" },
-  { id: "misleading", key: "report.reasonMisleading" },
-  { id: "harassment", key: "report.reasonHarassment" },
-  { id: "spam", key: "report.reasonSpam" },
-  { id: "other", key: "report.reasonOther" },
-];
+import { REPORT_REASONS as REASONS } from "../../../constants";
 
 export default function ReportDialog({ target, onClose, showToast }) {
   const { t } = useTranslation();
@@ -30,7 +18,7 @@ export default function ReportDialog({ target, onClose, showToast }) {
       showToast(t("report.thanks"));
       onClose();
     } catch (e) {
-      showToast(translateServerError(e.message, t));
+      showToast(translateServerError(e, t));
     } finally {
       setSubmitting(false);
     }

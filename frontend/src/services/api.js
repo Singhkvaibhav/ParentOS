@@ -82,7 +82,16 @@ export async function apiFetch(path, { method = "GET", body, signal, _retried } 
   }
 
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || "Request failed.");
+  if (!res.ok) {
+    const err = new Error(data.error || "Request failed.");
+    // `code` (and anything else the backend attached - attemptsRemaining,
+    // locked, needsVerification) rides along on the thrown Error so
+    // callers can act on it without re-parsing the message string. See
+    // i18n/errorMessages.js, which translates by `code` rather than by
+    // matching the English message text.
+    Object.assign(err, data);
+    throw err;
+  }
   return data;
 }
 

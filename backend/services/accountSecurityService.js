@@ -7,9 +7,11 @@ const logger = require("../logger");
 const i18n = require("../i18n");
 
 class AccountSecurityError extends Error {
-  constructor(status, message) {
+  constructor(status, message, code = null, meta = null) {
     super(message);
     this.status = status;
+    this.code = code;
+    if (meta) this.meta = meta;
   }
 }
 
@@ -65,7 +67,7 @@ async function requestPasswordReset(email, { ip } = {}) {
 
 async function resetPassword(rawToken, newPassword) {
   if (!newPassword || String(newPassword).length < 8) {
-    throw new AccountSecurityError(400, "Password must be at least 8 characters.");
+    throw new AccountSecurityError(400, "Password must be at least 8 characters.", "passwordTooShort");
   }
 
   const tokenHash = hashToken(String(rawToken || ""));
@@ -97,7 +99,7 @@ async function resetPassword(rawToken, newPassword) {
     // One message for every failure mode - expired, already used, and
     // nonexistent are indistinguishable to the caller, so a guessed token
     // reveals nothing about whether it was ever real.
-    if (!token) throw new AccountSecurityError(400, "That reset link is invalid or has expired.");
+    if (!token) throw new AccountSecurityError(400, "That reset link is invalid or has expired.", "resetLinkInvalid");
 
     userId = token.user_id;
     const passwordHash = await bcrypt.hash(String(newPassword), 10);
@@ -155,7 +157,7 @@ async function resetPassword(rawToken, newPassword) {
 async function assertNotLocked(user) {
   if (user?.locked_until && new Date(user.locked_until) > new Date()) {
     const minutes = Math.ceil((new Date(user.locked_until) - Date.now()) / 60000);
-    throw new AccountSecurityError(429, `Too many failed attempts. Try again in ${minutes} minute(s).`);
+    throw new AccountSecurityError(429, `Too many failed attempts. Try again in ${minutes} minute(s).`, "tooManyFailedAttempts", { n: minutes });
   }
 }
 

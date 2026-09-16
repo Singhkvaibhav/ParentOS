@@ -74,6 +74,7 @@ describe("remote geocoding providers (mocked transport)", () => {
     global.fetch = jest.fn().mockRejectedValue(new Error("network down"));
 
     const { geocode: geocodeWithProvider } = require("../services/geocodingService");
+    const { pool: extraPool } = require("../db");
     // Deliberately an area NOT geocoded earlier in this file: a cached
     // entry short-circuits before the provider is ever called, so reusing
     // one would test the cache rather than the fallback.
@@ -84,6 +85,7 @@ describe("remote geocoding providers (mocked transport)", () => {
     expect(result).not.toBeNull();
     expect(result.source).toBe("table-fallback");
 
+    await extraPool.end();
     delete process.env.GEOCODER;
     jest.resetModules();
   });
@@ -94,6 +96,7 @@ describe("remote geocoding providers (mocked transport)", () => {
     global.fetch = jest.fn().mockRejectedValue(new Error("network down"));
 
     const { geocode: geocodeWithProvider, normalizeKey: nk } = require("../services/geocodingService");
+    const { pool: extraPool } = require("../db");
     await geocodeWithProvider({ area: "Transient", city: "Espoo" });
 
     const { rows } = await query(
@@ -104,6 +107,7 @@ describe("remote geocoding providers (mocked transport)", () => {
 
     delete process.env.GEOCODER;
     jest.resetModules();
+    await extraPool.end();
   });
 
   test("a successful remote lookup is parsed and cached", async () => {
@@ -115,11 +119,13 @@ describe("remote geocoding providers (mocked transport)", () => {
     });
 
     const { geocode: geocodeWithProvider } = require("../services/geocodingService");
+    const { pool: extraPool } = require("../db");
     const result = await geocodeWithProvider({ area: "Senate Square", city: "Helsinki" });
 
     expect(result.lat).toBeCloseTo(60.1699, 3);
     expect(result.lng).toBeCloseTo(24.9384, 3);
     expect(result.source).toBe("nominatim");
+    await extraPool.end();
 
     delete process.env.GEOCODER;
     jest.resetModules();
@@ -132,6 +138,7 @@ describe("remote geocoding providers (mocked transport)", () => {
     global.fetch = fetchMock;
 
     const { geocode: geocodeWithProvider } = require("../services/geocodingService");
+    const { pool: extraPool } = require("../db");
     await geocodeWithProvider({ area: "Somewhere", city: "Helsinki" });
 
     expect(fetchMock).toHaveBeenCalled();
@@ -139,6 +146,7 @@ describe("remote geocoding providers (mocked transport)", () => {
     expect(headers["User-Agent"]).toBeTruthy();
 
     delete process.env.GEOCODER;
+    await extraPool.end();
     jest.resetModules();
   });
 });

@@ -1,7 +1,7 @@
 const messagesService = require("../services/messagesService");
 
 function handleServiceError(res, e) {
-  if (e instanceof messagesService.MessageError) return res.status(e.status).json({ error: e.message });
+  if (e instanceof messagesService.MessageError) return res.status(e.status).json({ error: e.message, code: e.code });
   throw e;
 }
 
