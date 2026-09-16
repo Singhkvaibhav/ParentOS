@@ -96,12 +96,12 @@ smoke() { # smoke <label> <path> <expected-status>
   fi
 }
 
-smoke "health"             "/api/health"             "200"
-smoke "public listings"    "/api/listings"           "200"
-smoke "marketplace config" "/api/meta/config"        "200"
-smoke "auth required"      "/api/transactions/mine"  "401"
-smoke "admin required"     "/api/analytics/platform" "401"
-smoke "privacy export gated" "/api/privacy/export"   "401"
+smoke "health"             "/api/health"                "200"
+smoke "public listings"    "/api/v1/listings"           "200"
+smoke "marketplace config" "/api/v1/meta/config"        "200"
+smoke "auth required"      "/api/v1/transactions/mine"  "401"
+smoke "admin required"     "/api/v1/analytics/platform" "401"
+smoke "privacy export gated" "/api/v1/privacy/export"   "401"
 # Must NOT exist on the public app: operational data (including unresolved
 # payment discrepancies) moved to a separate internal listener, and a 200
 # here would mean it had been reinstated.

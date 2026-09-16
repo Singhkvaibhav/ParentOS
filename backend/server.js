@@ -27,7 +27,7 @@ const cors = require("cors");
 const cookieParser = require("cookie-parser");
 const { issueCsrfToken, requireCsrfToken, CSRF_HEADER_NAME } = require("./middleware/csrf");
 const requestLogger = require("./middleware/requestLogger");
-const { resolveCorsOrigins } = require("./config");
+const { resolveCorsOrigins, API_PREFIX } = require("./config");
 const { assertValidConfig } = require("./configCheck");
 const { captureException } = require("./errorTracking");
 const logger = require("./logger");
@@ -166,14 +166,14 @@ app.use(cors({
 
 // Stripe webhook needs the raw body for signature verification, so it must
 // be registered BEFORE express.json() below, and only for this one route.
-app.post("/api/transactions/webhook", express.raw({ type: "application/json" }), transactionsController.webhook);
+app.post(`${API_PREFIX}/transactions/webhook`, express.raw({ type: "application/json" }), transactionsController.webhook);
 
 // Most endpoints never need more than a tiny JSON body - a small default
 // limit here (instead of one big limit for the whole app) means a stray
-// multi-megabyte payload to, say, /api/auth/login can't tie up memory.
+// multi-megabyte payload to, say, /api/v1/auth/login can't tie up memory.
 // Uploads sets its own larger limit on just that one route, below.
 app.use((req, res, next) => {
-  if (req.path.startsWith("/api/uploads")) return next();
+  if (req.path.startsWith(`${API_PREFIX}/uploads`)) return next();
   express.json({ limit: "300kb" })(req, res, next);
 });
 
@@ -187,21 +187,21 @@ app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 app.use(issueCsrfToken);
 app.use(requireCsrfToken);
 
-app.use("/api/auth", authRoutes);
-app.use("/api/listings", listingsRoutes);
-app.use("/api/users", usersRoutes);
-app.use("/api/messages", messagesRoutes);
-app.use("/api/favorites", favoritesRoutes);
-app.use("/api/reviews", reviewsRoutes);
-app.use("/api/uploads", imagesRoutes);
-app.use("/api/transactions", transactionsRoutes);
-app.use("/api/connect", connectRoutes);
-app.use("/api/meta", metaRoutes);
-app.use("/api/moderation", moderationRoutes);
-app.use("/api/notifications", notificationsRoutes);
-app.use("/api/analytics", analyticsRoutes);
-app.use("/api/reconciliation", reconciliationRoutes);
-app.use("/api/privacy", privacyRoutes);
+app.use(`${API_PREFIX}/auth`, authRoutes);
+app.use(`${API_PREFIX}/listings`, listingsRoutes);
+app.use(`${API_PREFIX}/users`, usersRoutes);
+app.use(`${API_PREFIX}/messages`, messagesRoutes);
+app.use(`${API_PREFIX}/favorites`, favoritesRoutes);
+app.use(`${API_PREFIX}/reviews`, reviewsRoutes);
+app.use(`${API_PREFIX}/uploads`, imagesRoutes);
+app.use(`${API_PREFIX}/transactions`, transactionsRoutes);
+app.use(`${API_PREFIX}/connect`, connectRoutes);
+app.use(`${API_PREFIX}/meta`, metaRoutes);
+app.use(`${API_PREFIX}/moderation`, moderationRoutes);
+app.use(`${API_PREFIX}/notifications`, notificationsRoutes);
+app.use(`${API_PREFIX}/analytics`, analyticsRoutes);
+app.use(`${API_PREFIX}/reconciliation`, reconciliationRoutes);
+app.use(`${API_PREFIX}/privacy`, privacyRoutes);
 
 // Not under /api: crawlers and link-preview bots expect robots.txt and a
 // listing's own URL at the site root, not namespaced under the JSON API.

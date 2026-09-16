@@ -21,7 +21,7 @@ jest.mock("stripe", () => jest.fn().mockImplementation(() => ({
 const app = require("../server");
 const { query } = require("../db");
 const { resetDb } = require("./dbReset");
-const { createVerifiedUser, makeSellerPayoutReady } = require("./helpers");
+const { createVerifiedUser, createListing: createListingBase } = require("./helpers");
 
 beforeAll(async () => {
   await app.dbReady;
@@ -29,18 +29,14 @@ beforeAll(async () => {
 });
 
 async function createListing(sellerAgent, overrides = {}) {
-  const res = await sellerAgent.post("/api/listings").send({
-    category: "toys", title: "Analytics toy", priceCents: 2000, condition: "Good", city: "Helsinki", area: "Kamppi", ...overrides,
-  });
-  await makeSellerPayoutReady(res.body.listing.seller_id);
-  return res.body.listing;
+  return createListingBase(sellerAgent, { category: "toys", title: "Analytics toy", priceCents: 2000, ...overrides });
 }
 
 // Pays only - the order reaches 'paid' and stops there.
 async function payForListing(buyerAgent, listingId) {
-  const checkout = await buyerAgent.post("/api/transactions/checkout").send({ listingId });
+  const checkout = await buyerAgent.post("/api/v1/transactions/checkout").send({ listingId });
   await request(app)
-    .post("/api/transactions/webhook")
+    .post("/api/v1/transactions/webhook")
     .set("Content-Type", "application/json")
     .set("stripe-signature", "mocked")
     .send(JSON.stringify({
@@ -53,7 +49,7 @@ async function payForListing(buyerAgent, listingId) {
 // Pays AND confirms receipt - the full path to 'completed'.
 async function completeSale(buyerAgent, listingId) {
   const transactionId = await payForListing(buyerAgent, listingId);
-  await buyerAgent.post(`/api/transactions/${transactionId}/confirm-receipt`);
+  await buyerAgent.post(`/api/v1/transactions/${transactionId}/confirm-receipt`);
   return transactionId;
 }
 
@@ -75,7 +71,7 @@ describe("listing views", () => {
     const seller = await createVerifiedUser(app, { email: "viewseller@example.com" });
     const listing = await createListing(seller.agent);
 
-    await request(app).get(`/api/listings/${listing.id}`);
+    await request(app).get(`/api/v1/listings/${listing.id}`);
     expect(await waitForViewCount(listing.id, 1)).toBeGreaterThanOrEqual(1);
   });
 
@@ -83,7 +79,7 @@ describe("listing views", () => {
     const seller = await createVerifiedUser(app, { email: "anonviewseller@example.com" });
     const listing = await createListing(seller.agent);
 
-    await request(app).get(`/api/listings/${listing.id}`); // no session cookie
+    await request(app).get(`/api/v1/listings/${listing.id}`); // no session cookie
     await waitForViewCount(listing.id, 1);
 
     const { rows } = await query(
@@ -99,7 +95,7 @@ describe("listing views", () => {
     const seller = await createVerifiedUser(app, { email: "selfviewseller@example.com" });
     const listing = await createListing(seller.agent);
 
-    await seller.agent.get(`/api/listings/${listing.id}`);
+    await seller.agent.get(`/api/v1/listings/${listing.id}`);
     await new Promise((r) => setTimeout(r, 400)); // give the async write a chance to land
 
     const { rows } = await query("SELECT view_count FROM listings WHERE id = $1", [listing.id]);
@@ -109,7 +105,7 @@ describe("listing views", () => {
 
 describe("seller analytics", () => {
   test("requires authentication", async () => {
-    expect((await request(app).get("/api/analytics/me")).status).toBe(401);
+    expect((await request(app).get("/api/v1/analytics/me")).status).toBe(401);
   });
 
   test("reports views, conversations, sales and net earnings", async () => {
@@ -117,12 +113,12 @@ describe("seller analytics", () => {
     const buyer = await createVerifiedUser(app, { email: "statsbuyer@example.com" });
     const listing = await createListing(seller.agent, { priceCents: 2000 });
 
-    await request(app).get(`/api/listings/${listing.id}`);
+    await request(app).get(`/api/v1/listings/${listing.id}`);
     await waitForViewCount(listing.id, 1);
-    await buyer.agent.post("/api/messages/thread").send({ listingId: listing.id, text: "interested" });
+    await buyer.agent.post("/api/v1/messages/thread").send({ listingId: listing.id, text: "interested" });
     await completeSale(buyer.agent, listing.id);
 
-    const res = await seller.agent.get("/api/analytics/me");
+    const res = await seller.agent.get("/api/v1/analytics/me");
     expect(res.status).toBe(200);
     expect(res.body.stats.totalViews).toBeGreaterThanOrEqual(1);
     expect(res.body.stats.conversations).toBeGreaterThanOrEqual(1);
@@ -134,7 +130,7 @@ describe("seller analytics", () => {
   // "0% conversion" reads as failure when the truth is "no data yet".
   test("conversion rate is null rather than 0 when there are no views", async () => {
     const seller = await createVerifiedUser(app, { email: "noviewsseller@example.com" });
-    const res = await seller.agent.get("/api/analytics/me");
+    const res = await seller.agent.get("/api/v1/analytics/me");
     expect(res.body.stats.viewToSaleRate).toBeNull();
   });
 
@@ -148,7 +144,7 @@ describe("seller analytics", () => {
 
     await payForListing(buyer.agent, listing.id); // paid, not confirmed
 
-    const res = await seller.agent.get("/api/analytics/me");
+    const res = await seller.agent.get("/api/v1/analytics/me");
     expect(res.body.stats.completedSales).toBe(0);
     expect(res.body.stats.awaitingHandover).toBe(1);
     // The money is genuinely captured, so it still shows as earned.
@@ -158,10 +154,10 @@ describe("seller analytics", () => {
   test("a seller sees per-listing performance", async () => {
     const seller = await createVerifiedUser(app, { email: "perlistingseller@example.com" });
     const listing = await createListing(seller.agent);
-    await request(app).get(`/api/listings/${listing.id}`);
+    await request(app).get(`/api/v1/listings/${listing.id}`);
     await waitForViewCount(listing.id, 1);
 
-    const res = await seller.agent.get(`/api/analytics/listings/${listing.id}`);
+    const res = await seller.agent.get(`/api/v1/analytics/listings/${listing.id}`);
     expect(res.status).toBe(200);
     expect(res.body.stats.totalViews).toBeGreaterThanOrEqual(1);
     expect(res.body.stats.viewsLast7Days).toBeGreaterThanOrEqual(1);
@@ -173,7 +169,7 @@ describe("seller analytics", () => {
     const nosy = await createVerifiedUser(app, { email: "nosyuser@example.com" });
     const listing = await createListing(seller.agent);
 
-    const res = await nosy.agent.get(`/api/analytics/listings/${listing.id}`);
+    const res = await nosy.agent.get(`/api/v1/analytics/listings/${listing.id}`);
     expect(res.status).toBe(403);
   });
 });
@@ -181,7 +177,7 @@ describe("seller analytics", () => {
 describe("platform analytics", () => {
   test("a non-admin can't see platform stats", async () => {
     const user = await createVerifiedUser(app, { email: "notadminstats@example.com" });
-    expect((await user.agent.get("/api/analytics/platform")).status).toBe(403);
+    expect((await user.agent.get("/api/v1/analytics/platform")).status).toBe(403);
   });
 
   test("an admin sees marketplace health metrics", async () => {
@@ -192,7 +188,7 @@ describe("platform analytics", () => {
     const listing = await createListing(seller.agent, { priceCents: 2000 });
     await completeSale(buyer.agent, listing.id);
 
-    const res = await admin.agent.get("/api/analytics/platform");
+    const res = await admin.agent.get("/api/v1/analytics/platform");
     expect(res.status).toBe(200);
     const s = res.body.stats;
 

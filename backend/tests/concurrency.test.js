@@ -42,7 +42,7 @@ jest.mock("stripe", () => {
 const app = require("../server");
 const { query } = require("../db");
 const { resetDb } = require("./dbReset");
-const { createVerifiedUser, makeSellerPayoutReady } = require("./helpers");
+const { createVerifiedUser, createListing: createListingBase } = require("./helpers");
 const transactionsService = require("../services/transactionsService");
 const { __setBehavior } = require("../ai/controller");
 
@@ -56,19 +56,12 @@ beforeEach(() => {
 });
 
 async function createListing(sellerAgent, overrides = {}) {
-  const res = await sellerAgent.post("/api/listings").send({
-    category: "toys", title: "Concurrency toy", priceCents: 1000, condition: "Good", city: "Helsinki", area: "Kamppi", ...overrides,
-  });
-  // Checkout refuses to charge a buyer when the seller can't receive
-  // payouts, so any listing meant to be buyable needs its seller
-  // onboarded - same as reality.
-  await makeSellerPayoutReady(res.body.listing.seller_id);
-  return res.body.listing;
+  return createListingBase(sellerAgent, { category: "toys", title: "Concurrency toy", priceCents: 1000, ...overrides });
 }
 
 function sendWebhook(eventType, dataObject) {
   return request(app)
-    .post("/api/transactions/webhook")
+    .post("/api/v1/transactions/webhook")
     .set("Content-Type", "application/json")
     .set("stripe-signature", "mocked")
     .send(JSON.stringify({ type: eventType, data: { object: dataObject } }));
@@ -93,7 +86,7 @@ describe("state-transition atomicity", () => {
     const buyer = await createVerifiedUser(app, { email: "racebuyer@example.com" });
     const listing = await createListing(seller.agent);
 
-    const checkoutRes = await buyer.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+    const checkoutRes = await buyer.agent.post("/api/v1/transactions/checkout").send({ listingId: listing.id });
     const paymentIntentId = checkoutRes.body.transaction.stripe_payment_intent_id;
 
     // Backdate the reservation so the sweep considers it expired, making
@@ -130,7 +123,7 @@ describe("state-transition atomicity", () => {
     const seller = await createVerifiedUser(app, { email: "dupeseller@example.com" });
     const buyer = await createVerifiedUser(app, { email: "dupebuyer@example.com" });
     const listing = await createListing(seller.agent);
-    const checkoutRes = await buyer.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+    const checkoutRes = await buyer.agent.post("/api/v1/transactions/checkout").send({ listingId: listing.id });
     const t = checkoutRes.body.transaction;
 
     await expect(
@@ -148,7 +141,7 @@ describe("state-transition atomicity", () => {
     const seller = await createVerifiedUser(app, { email: "twopendingseller@example.com" });
     const buyer = await createVerifiedUser(app, { email: "twopendingbuyer@example.com" });
     const listing = await createListing(seller.agent);
-    await buyer.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+    await buyer.agent.post("/api/v1/transactions/checkout").send({ listingId: listing.id });
 
     await expect(
       query(
@@ -169,8 +162,8 @@ describe("conversation + AI concurrency", () => {
     const listing = await createListing(seller.agent);
 
     const [r1, r2] = await Promise.all([
-      buyer.agent.post("/api/messages/thread").send({ listingId: listing.id, text: "first" }),
-      buyer.agent.post("/api/messages/thread").send({ listingId: listing.id, text: "second" }),
+      buyer.agent.post("/api/v1/messages/thread").send({ listingId: listing.id, text: "first" }),
+      buyer.agent.post("/api/v1/messages/thread").send({ listingId: listing.id, text: "second" }),
     ]);
     expect(r1.status).toBe(201);
     expect(r2.status).toBe(201);
@@ -192,11 +185,11 @@ describe("conversation + AI concurrency", () => {
     const buyer = await createVerifiedUser(app, { email: "aiafterbuyer@example.com" });
     const listing = await createListing(seller.agent);
 
-    const sendRes = await buyer.agent.post("/api/messages/thread").send({ listingId: listing.id, text: "question?" });
+    const sendRes = await buyer.agent.post("/api/v1/messages/thread").send({ listingId: listing.id, text: "question?" });
     const conversationId = sendRes.body.conversation.id;
 
     // Seller answers well before the 600ms AI generation finishes.
-    await seller.agent.post(`/api/messages/conversations/${conversationId}/reply`).send({ text: "real seller answer" });
+    await seller.agent.post(`/api/v1/messages/conversations/${conversationId}/reply`).send({ text: "real seller answer" });
 
     // Give the in-flight AI generation time to finish and attempt its insert.
     await new Promise((r) => setTimeout(r, 900));
@@ -217,7 +210,7 @@ describe("conversation + AI concurrency", () => {
     const buyer = await createVerifiedUser(app, { email: "airetrybuyer@example.com" });
     const listing = await createListing(seller.agent);
 
-    const sendRes = await buyer.agent.post("/api/messages/thread").send({ listingId: listing.id, text: "first try" });
+    const sendRes = await buyer.agent.post("/api/v1/messages/thread").send({ listingId: listing.id, text: "first try" });
     const conversationId = sendRes.body.conversation.id;
 
     const claimReleased = await waitFor(async () => {
@@ -229,7 +222,7 @@ describe("conversation + AI concurrency", () => {
     // Now the AI works again - a subsequent message should get a reply,
     // which would be impossible if the failed attempt had left the claim set.
     __setBehavior({ mode: "instant", text: "recovered reply" });
-    await buyer.agent.post(`/api/messages/conversations/${conversationId}/reply`).send({ text: "second try" });
+    await buyer.agent.post(`/api/v1/messages/conversations/${conversationId}/reply`).send({ text: "second try" });
 
     const gotReply = await waitFor(async () => {
       const { rows } = await query(

@@ -31,12 +31,28 @@ async function csrfAgent(app) {
 // Signs up and verifies a fresh user, returning a CSRF-aware agent already
 // carrying the session cookie from verification - so tests can just do
 // `agent.get(...)` / `agent.post(...)` for authenticated requests.
+//
+// Checks both responses explicitly rather than trusting them - neither
+// used to be checked, which meant a signup or verify that silently failed
+// (rate limiting, a transient error, an already-used email) produced an
+// agent with no session cookie at all. That agent still LOOKED usable, so
+// the actual failure only ever surfaced several calls later, as an
+// unrelated-looking 401 deep inside some other helper (e.g.
+// createListing) - exactly what happened in moderation.test.js: this
+// function's own failure came back as "listing creation failed: 401 Not
+// logged in" from a completely different function.
 async function createVerifiedUser(app, { name = "Test User", email, password = "testpass123" } = {}) {
   const uniqueEmail = email || `user-${Date.now()}-${Math.random().toString(36).slice(2)}@example.com`;
   const agent = await csrfAgent(app);
-  const signupRes = await agent.post("/api/auth/signup").send({ name, email: uniqueEmail, password });
+  const signupRes = await agent.post("/api/v1/auth/signup").send({ name, email: uniqueEmail, password });
+  if (signupRes.status !== 200) {
+    throw new Error(`createVerifiedUser: signup failed for ${uniqueEmail}: ${signupRes.status} ${JSON.stringify(signupRes.body)}`);
+  }
   const code = signupRes.body.devCode;
-  const verifyRes = await agent.post("/api/auth/verify").send({ email: uniqueEmail, code });
+  const verifyRes = await agent.post("/api/v1/auth/verify").send({ email: uniqueEmail, code });
+  if (verifyRes.status !== 200) {
+    throw new Error(`createVerifiedUser: verify failed for ${uniqueEmail} (code ${code}): ${verifyRes.status} ${JSON.stringify(verifyRes.body)}`);
+  }
   return { agent, user: verifyRes.body.user, email: uniqueEmail, password };
 }
 
@@ -54,4 +70,27 @@ async function makeSellerPayoutReady(userId) {
   );
 }
 
-module.exports = { createVerifiedUser, csrfAgent, makeSellerPayoutReady };
+// Creates a listing via the real API and returns it. Centralized here in
+// place of the near-identical copy this used to have in 14 different test
+// files, so every caller gets the same clear failure if creation itself
+// ever fails, instead of each file's own copy crashing confusingly a line
+// later on `res.body.listing.seller_id` of an undefined listing (this is
+// exactly what happened in privacy.test.js - see its git history).
+//
+// `payoutReady` defaults to true (checkout refuses to charge a buyer when
+// the seller can't actually receive the money, so most callers need it);
+// pass `payoutReady: false` for tests that never touch checkout and don't
+// need the extra Connect-account setup query.
+async function createListing(sellerAgent, { payoutReady = true, ...overrides } = {}) {
+  const res = await sellerAgent.post("/api/v1/listings").send({
+    category: "toys", title: "Test listing", priceCents: 1000, condition: "Good", city: "Helsinki", area: "Kamppi",
+    ...overrides,
+  });
+  if (!res.body.listing) {
+    throw new Error(`listing creation failed: ${res.status} ${JSON.stringify(res.body)}`);
+  }
+  if (payoutReady) await makeSellerPayoutReady(res.body.listing.seller_id);
+  return res.body.listing;
+}
+
+module.exports = { createVerifiedUser, csrfAgent, makeSellerPayoutReady, createListing };

@@ -88,6 +88,22 @@ function resolveCorsOrigins() {
 // or white-labelling meant hunting literals and inevitably missing some.
 const BRAND = process.env.BRAND_NAME || "Uusiksi";
 
+// Every JSON route is mounted under this prefix (server.js) - one place to
+// change it rather than seventeen. Health/readiness (/api/health,
+// /api/ready) are deliberately NOT under it: they're consumed by infra
+// (Docker healthchecks, uptime monitors, orchestrators), not by app
+// clients, and versioning them would just mean updating monitoring config
+// every time the API version bumps for reasons that have nothing to do
+// with whether the process is alive.
+//
+// Bump this only for an actual breaking change to a resource's shape -
+// most changes (a new field, a new endpoint) are backward compatible and
+// don't need a version bump at all. Minting v2 for everything on every
+// change is the failure mode to avoid here, not the one this constant
+// exists to prevent - see the mobile app's client for why this matters
+// once real installed clients exist that can't all update at once.
+const API_PREFIX = "/api/v1";
+
 const LIMITS = {
   // (P1 #3) Messages were unbounded - a single 300KB message would be
   // stored, re-sent in every thread fetch, and fed to the AI as prompt
@@ -103,6 +119,7 @@ const LIMITS = {
 
 module.exports = {
   BRAND,
+  API_PREFIX,
   resolveCorsOrigins,
   LOCAL_DEV_ORIGIN,
   MARKETPLACE,

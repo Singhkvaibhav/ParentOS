@@ -20,7 +20,7 @@ const request = require("supertest");
 const app = require("../server");
 const { query } = require("../db");
 const { resetDb } = require("./dbReset");
-const { createVerifiedUser, makeSellerPayoutReady } = require("./helpers");
+const { createVerifiedUser, createListing: createListingBase } = require("./helpers");
 
 beforeAll(async () => {
   await app.dbReady;
@@ -43,16 +43,11 @@ async function seller(email) {
 }
 
 async function listingFor(agent, overrides = {}) {
-  const res = await agent.post("/api/listings").send({
-    category: "toys", title: "Adversarial toy", priceCents: 3000,
-    condition: "Good", city: "Helsinki", area: "Kamppi", ...overrides,
-  });
-  await makeSellerPayoutReady(res.body.listing.seller_id);
-  return res.body.listing;
+  return createListingBase(agent, { category: "toys", title: "Adversarial toy", priceCents: 3000, ...overrides });
 }
 
 function webhook(type, object) {
-  return request(app).post("/api/transactions/webhook")
+  return request(app).post("/api/v1/transactions/webhook")
     .set("Content-Type", "application/json").set("stripe-signature", "sig")
     .send(JSON.stringify({ type, data: { object } }));
 }
@@ -86,7 +81,7 @@ describe("A: PaymentIntent created, then the database write fails", () => {
     );
     mockCreate.mockResolvedValueOnce({ id: collidingId, client_secret: "cs", amount: 3000 });
 
-    const res = await b.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+    const res = await b.agent.post("/api/v1/transactions/checkout").send({ listingId: listing.id });
 
     expect(res.status).toBeGreaterThanOrEqual(400);
     // Cancelled at Stripe, so no money can ever be captured for a sale we
@@ -109,7 +104,7 @@ describe("B: webhook arrives after the reservation has expired", () => {
     const b = await createVerifiedUser(app, { name: "B", email: "advBbuyer@example.com" });
     const listing = await listingFor(s.agent);
 
-    const checkout = await b.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+    const checkout = await b.agent.post("/api/v1/transactions/checkout").send({ listingId: listing.id });
     const pi = checkout.body.transaction.stripe_payment_intent_id;
 
     // Age the reservation past its TTL and sweep, as the scheduler would.
@@ -144,7 +139,7 @@ describe("C: Stripe refund succeeds, then the database transition fails", () => 
     const b = await createVerifiedUser(app, { name: "B", email: "advCbuyer@example.com" });
     const listing = await listingFor(s.agent);
 
-    const checkout = await b.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+    const checkout = await b.agent.post("/api/v1/transactions/checkout").send({ listingId: listing.id });
     const pi = checkout.body.transaction.stripe_payment_intent_id;
     const transactionId = checkout.body.transaction.id;
 
@@ -212,12 +207,12 @@ describe("C: Stripe refund succeeds, then the database transition fails", () => 
     const b = await createVerifiedUser(app, { name: "B", email: "advCmodbuyer@example.com" });
     const listing = await listingFor(s.agent);
 
-    const checkout = await b.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+    const checkout = await b.agent.post("/api/v1/transactions/checkout").send({ listingId: listing.id });
     await webhook("payment_intent.succeeded", { id: checkout.body.transaction.stripe_payment_intent_id });
 
     // Make the refund fail so the task is retried rather than settled.
     mockRefund.mockRejectedValueOnce(new Error("Stripe unavailable"));
-    await admin.agent.post(`/api/moderation/listings/${listing.id}/takedown`).send({ reason: "Recalled" });
+    await admin.agent.post(`/api/v1/moderation/listings/${listing.id}/takedown`).send({ reason: "Recalled" });
 
     const { rows: before } = await query(
       "SELECT idempotency_key, attempts, state FROM moderation_refund_tasks WHERE transaction_id = $1",
@@ -243,9 +238,9 @@ describe("C: Stripe refund succeeds, then the database transition fails", () => 
     const b = await createVerifiedUser(app, { name: "B", email: "advCmodbuyer2@example.com" });
     const listing = await listingFor(s.agent);
 
-    const checkout = await b.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+    const checkout = await b.agent.post("/api/v1/transactions/checkout").send({ listingId: listing.id });
     await webhook("payment_intent.succeeded", { id: checkout.body.transaction.stripe_payment_intent_id });
-    await admin.agent.post(`/api/moderation/listings/${listing.id}/takedown`).send({ reason: "Recalled" });
+    await admin.agent.post(`/api/v1/moderation/listings/${listing.id}/takedown`).send({ reason: "Recalled" });
 
     // Simulate a worker that claimed the task and then crashed before
     // recording success or failure - the exact state the durable-claim
@@ -282,7 +277,7 @@ describe("D: the same webhook delivered concurrently", () => {
     const b = await createVerifiedUser(app, { name: "B", email: "advDbuyer@example.com" });
     const listing = await listingFor(s.agent);
 
-    const checkout = await b.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+    const checkout = await b.agent.post("/api/v1/transactions/checkout").send({ listingId: listing.id });
     const pi = checkout.body.transaction.stripe_payment_intent_id;
 
     const responses = await Promise.all(
@@ -317,7 +312,7 @@ describe("E: payment_failed and payment_succeeded arrive out of order", () => {
     const b = await createVerifiedUser(app, { name: "B", email: "advEbuyer@example.com" });
     const listing = await listingFor(s.agent);
 
-    const checkout = await b.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+    const checkout = await b.agent.post("/api/v1/transactions/checkout").send({ listingId: listing.id });
     const pi = checkout.body.transaction.stripe_payment_intent_id;
 
     await webhook("payment_intent.succeeded", { id: pi });
@@ -336,7 +331,7 @@ describe("E: payment_failed and payment_succeeded arrive out of order", () => {
     const b = await createVerifiedUser(app, { name: "B", email: "advEbuyer2@example.com" });
     const listing = await listingFor(s.agent);
 
-    const checkout = await b.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+    const checkout = await b.agent.post("/api/v1/transactions/checkout").send({ listingId: listing.id });
     await webhook("payment_intent.payment_failed", { id: checkout.body.transaction.stripe_payment_intent_id });
 
     const l = await query("SELECT status FROM listings WHERE id = $1", [listing.id]);
@@ -355,7 +350,7 @@ describe("F: seller's Connect account is disabled after checkout", () => {
     // Disable payouts, as Stripe would after a failed verification.
     await query("UPDATE users SET connect_charges_enabled = false WHERE id = $1", [s.user.id]);
 
-    const res = await b.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+    const res = await b.agent.post("/api/v1/transactions/checkout").send({ listingId: listing.id });
     // Money must never be collected on behalf of someone who cannot
     // receive it.
     expect(res.status).toBe(409);
@@ -366,17 +361,17 @@ describe("F: seller's Connect account is disabled after checkout", () => {
     const b = await createVerifiedUser(app, { name: "B", email: "advFbuyer2@example.com" });
     const listing = await listingFor(s.agent);
 
-    const checkout = await b.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+    const checkout = await b.agent.post("/api/v1/transactions/checkout").send({ listingId: listing.id });
     await webhook("payment_intent.succeeded", { id: checkout.body.transaction.stripe_payment_intent_id });
 
     await query("UPDATE users SET connect_charges_enabled = false WHERE id = $1", [s.user.id]);
 
     // The buyer isn't stranded: the order still exists and the dispute
     // route remains open, so captured money has a way back.
-    const mine = await b.agent.get("/api/transactions/mine");
+    const mine = await b.agent.get("/api/v1/transactions/mine");
     expect(mine.body.transactions.some((t) => t.id === checkout.body.transaction.id)).toBe(true);
 
-    const dispute = await b.agent.post(`/api/transactions/${checkout.body.transaction.id}/dispute`)
+    const dispute = await b.agent.post(`/api/v1/transactions/${checkout.body.transaction.id}/dispute`)
       .send({ reason: "Seller can no longer be paid out" });
     expect(dispute.status).toBe(200);
   });

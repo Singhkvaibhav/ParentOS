@@ -23,7 +23,7 @@ jest.mock("stripe", () => jest.fn().mockImplementation(() => ({
 const app = require("../server");
 const { query } = require("../db");
 const { resetDb } = require("./dbReset");
-const { createVerifiedUser, makeSellerPayoutReady } = require("./helpers");
+const { createVerifiedUser, createListing: createListingBase } = require("./helpers");
 
 beforeAll(async () => {
   await app.dbReady;
@@ -36,15 +36,11 @@ beforeEach(() => {
 });
 
 async function createListing(sellerAgent, overrides = {}) {
-  const res = await sellerAgent.post("/api/listings").send({
-    category: "toys", title: "Lifecycle toy", priceCents: 1500, condition: "Good", city: "Helsinki", area: "Kamppi", ...overrides,
-  });
-  await makeSellerPayoutReady(res.body.listing.seller_id);
-  return res.body.listing;
+  return createListingBase(sellerAgent, { category: "toys", title: "Lifecycle toy", priceCents: 1500, ...overrides });
 }
 
 function sendWebhook(type, object) {
-  return request(app).post("/api/transactions/webhook")
+  return request(app).post("/api/v1/transactions/webhook")
     .set("Content-Type", "application/json").set("stripe-signature", "mocked")
     .send(JSON.stringify({ type, data: { object } }));
 }
@@ -53,7 +49,7 @@ async function paidOrder(sellerEmail, buyerEmail) {
   const seller = await createVerifiedUser(app, { email: sellerEmail });
   const buyer = await createVerifiedUser(app, { email: buyerEmail });
   const listing = await createListing(seller.agent);
-  const checkout = await buyer.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+  const checkout = await buyer.agent.post("/api/v1/transactions/checkout").send({ listingId: listing.id });
   await sendWebhook("payment_intent.succeeded", { id: checkout.body.transaction.stripe_payment_intent_id });
   return { seller, buyer, listing, transactionId: checkout.body.transaction.id };
 }
@@ -64,12 +60,12 @@ describe("transaction lifecycle", () => {
   test("the happy path runs paid -> fulfilled -> completed", async () => {
     const { seller, buyer, transactionId } = await paidOrder("lcseller@example.com", "lcbuyer@example.com");
 
-    const fulfilled = await seller.agent.post(`/api/transactions/${transactionId}/fulfil`);
+    const fulfilled = await seller.agent.post(`/api/v1/transactions/${transactionId}/fulfil`);
     expect(fulfilled.status).toBe(200);
     expect(fulfilled.body.transaction.status).toBe("fulfilled");
     expect(fulfilled.body.transaction.fulfilled_at).not.toBeNull();
 
-    const completed = await buyer.agent.post(`/api/transactions/${transactionId}/confirm-receipt`);
+    const completed = await buyer.agent.post(`/api/v1/transactions/${transactionId}/confirm-receipt`);
     expect(completed.status).toBe(200);
     expect(completed.body.transaction.status).toBe("completed");
     expect(completed.body.transaction.completed_at).not.toBeNull();
@@ -78,29 +74,29 @@ describe("transaction lifecycle", () => {
   test("a buyer can confirm receipt directly from paid, without a fulfil step", async () => {
     // Pickup in person - there's no "posted it" moment to record.
     const { buyer, transactionId } = await paidOrder("directseller@example.com", "directbuyer@example.com");
-    const res = await buyer.agent.post(`/api/transactions/${transactionId}/confirm-receipt`);
+    const res = await buyer.agent.post(`/api/v1/transactions/${transactionId}/confirm-receipt`);
     expect(res.status).toBe(200);
     expect(res.body.transaction.status).toBe("completed");
   });
 
   test("only the seller can mark an order fulfilled", async () => {
     const { buyer, transactionId } = await paidOrder("fulseller@example.com", "fulbuyer@example.com");
-    const res = await buyer.agent.post(`/api/transactions/${transactionId}/fulfil`);
+    const res = await buyer.agent.post(`/api/v1/transactions/${transactionId}/fulfil`);
     expect(res.status).toBe(403);
   });
 
   test("only the buyer can confirm receipt", async () => {
     const { seller, transactionId } = await paidOrder("confseller@example.com", "confbuyer@example.com");
-    const res = await seller.agent.post(`/api/transactions/${transactionId}/confirm-receipt`);
+    const res = await seller.agent.post(`/api/v1/transactions/${transactionId}/confirm-receipt`);
     expect(res.status).toBe(403);
   });
 
   test("invalid transitions are refused", async () => {
     const { seller, buyer, transactionId } = await paidOrder("invseller@example.com", "invbuyer@example.com");
-    await buyer.agent.post(`/api/transactions/${transactionId}/confirm-receipt`); // -> completed
+    await buyer.agent.post(`/api/v1/transactions/${transactionId}/confirm-receipt`); // -> completed
 
     // completed can't go back to fulfilled
-    const res = await seller.agent.post(`/api/transactions/${transactionId}/fulfil`);
+    const res = await seller.agent.post(`/api/v1/transactions/${transactionId}/fulfil`);
     expect(res.status).toBe(409);
   });
 
@@ -108,38 +104,38 @@ describe("transaction lifecycle", () => {
     const seller = await createVerifiedUser(app, { email: "unpaidlcseller@example.com" });
     const buyer = await createVerifiedUser(app, { email: "unpaidlcbuyer@example.com" });
     const listing = await createListing(seller.agent);
-    const checkout = await buyer.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+    const checkout = await buyer.agent.post("/api/v1/transactions/checkout").send({ listingId: listing.id });
     const id = checkout.body.transaction.id;
 
-    expect((await seller.agent.post(`/api/transactions/${id}/fulfil`)).status).toBe(409);
-    expect((await buyer.agent.post(`/api/transactions/${id}/confirm-receipt`)).status).toBe(409);
+    expect((await seller.agent.post(`/api/v1/transactions/${id}/fulfil`)).status).toBe(409);
+    expect((await buyer.agent.post(`/api/v1/transactions/${id}/confirm-receipt`)).status).toBe(409);
   });
 
   // Either party can be wronged - a buyer falsely claiming non-delivery
   // harms the seller just as much as the reverse.
   test("either party can raise a dispute", async () => {
     const a = await paidOrder("dispseller1@example.com", "dispbuyer1@example.com");
-    const byBuyer = await a.buyer.agent.post(`/api/transactions/${a.transactionId}/dispute`).send({ reason: "Never arrived" });
+    const byBuyer = await a.buyer.agent.post(`/api/v1/transactions/${a.transactionId}/dispute`).send({ reason: "Never arrived" });
     expect(byBuyer.status).toBe(200);
     expect(byBuyer.body.transaction.status).toBe("disputed");
 
     const b = await paidOrder("dispseller2@example.com", "dispbuyer2@example.com");
-    const bySeller = await b.seller.agent.post(`/api/transactions/${b.transactionId}/dispute`).send({ reason: "Buyer claims non-delivery falsely" });
+    const bySeller = await b.seller.agent.post(`/api/v1/transactions/${b.transactionId}/dispute`).send({ reason: "Buyer claims non-delivery falsely" });
     expect(bySeller.status).toBe(200);
     expect(bySeller.body.transaction.status).toBe("disputed");
   });
 
   test("a dispute requires a reason", async () => {
     const { buyer, transactionId } = await paidOrder("noreasonseller@example.com", "noreasonbuyer@example.com");
-    const res = await buyer.agent.post(`/api/transactions/${transactionId}/dispute`).send({});
+    const res = await buyer.agent.post(`/api/v1/transactions/${transactionId}/dispute`).send({});
     expect(res.status).toBe(400);
   });
 
   test("an unrelated user can't touch someone else's order", async () => {
     const { transactionId } = await paidOrder("privseller@example.com", "privbuyer@example.com");
     const stranger = await createVerifiedUser(app, { email: "lcstranger@example.com" });
-    expect((await stranger.agent.post(`/api/transactions/${transactionId}/fulfil`)).status).toBe(403);
-    expect((await stranger.agent.post(`/api/transactions/${transactionId}/dispute`).send({ reason: "x" })).status).toBe(403);
+    expect((await stranger.agent.post(`/api/v1/transactions/${transactionId}/fulfil`)).status).toBe(403);
+    expect((await stranger.agent.post(`/api/v1/transactions/${transactionId}/dispute`).send({ reason: "x" })).status).toBe(403);
   });
 });
 
@@ -156,7 +152,7 @@ describe("moderation vs in-flight payments", () => {
     const admin = await makeAdmin();
     const { listing, transactionId } = await paidOrder("modpaidseller@example.com", "modpaidbuyer@example.com");
 
-    const res = await admin.agent.post(`/api/moderation/listings/${listing.id}/takedown`).send({ reason: "Recalled product" });
+    const res = await admin.agent.post(`/api/v1/moderation/listings/${listing.id}/takedown`).send({ reason: "Recalled product" });
     expect(res.status).toBe(200);
 
     expect(mockRefundsCreate).toHaveBeenCalled();
@@ -170,9 +166,9 @@ describe("moderation vs in-flight payments", () => {
     const seller = await createVerifiedUser(app, { email: "modpendseller@example.com" });
     const buyer = await createVerifiedUser(app, { email: "modpendbuyer@example.com" });
     const listing = await createListing(seller.agent);
-    const checkout = await buyer.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+    const checkout = await buyer.agent.post("/api/v1/transactions/checkout").send({ listingId: listing.id });
 
-    await admin.agent.post(`/api/moderation/listings/${listing.id}/takedown`).send({ reason: "Prohibited" });
+    await admin.agent.post(`/api/v1/moderation/listings/${listing.id}/takedown`).send({ reason: "Prohibited" });
 
     // Cancelling stops the PaymentIntent ever capturing - a refund would
     // be the wrong tool here, since no money moved yet.
@@ -187,9 +183,9 @@ describe("moderation vs in-flight payments", () => {
   test("a COMPLETED order is left alone by a takedown", async () => {
     const admin = await makeAdmin();
     const { buyer, listing, transactionId } = await paidOrder("modcompseller@example.com", "modcompbuyer@example.com");
-    await buyer.agent.post(`/api/transactions/${transactionId}/confirm-receipt`);
+    await buyer.agent.post(`/api/v1/transactions/${transactionId}/confirm-receipt`);
 
-    await admin.agent.post(`/api/moderation/listings/${listing.id}/takedown`).send({ reason: "Late report" });
+    await admin.agent.post(`/api/v1/moderation/listings/${listing.id}/takedown`).send({ reason: "Late report" });
 
     expect(mockRefundsCreate).not.toHaveBeenCalled();
     const { rows } = await query("SELECT status FROM transactions WHERE id = $1", [transactionId]);
@@ -199,7 +195,7 @@ describe("moderation vs in-flight payments", () => {
   test("the buyer is notified their order was cancelled and refunded", async () => {
     const admin = await makeAdmin();
     const { buyer, listing } = await paidOrder("modnotifyseller@example.com", "modnotifybuyer@example.com");
-    await admin.agent.post(`/api/moderation/listings/${listing.id}/takedown`).send({ reason: "Unsafe" });
+    await admin.agent.post(`/api/v1/moderation/listings/${listing.id}/takedown`).send({ reason: "Unsafe" });
 
     // notify() is deliberately fire-and-forget (a refund must not fail
     // because a notification couldn't be written), so this has to wait for
@@ -226,33 +222,33 @@ describe("moderated listings are not publicly retrievable", () => {
     await query("UPDATE users SET is_admin = true WHERE id = $1", [admin.user.id]);
     const seller = await createVerifiedUser(app, { email: `hideseller${Math.random().toString(36).slice(2)}@example.com` });
     const listing = await createListing(seller.agent, { title: "Hidden item" });
-    await admin.agent.post(`/api/moderation/listings/${listing.id}/takedown`).send({ reason: "Unsafe" });
+    await admin.agent.post(`/api/v1/moderation/listings/${listing.id}/takedown`).send({ reason: "Unsafe" });
     return { admin, seller, listing };
   }
 
   test("an anonymous visitor with the direct id gets a 404", async () => {
     const { listing } = await takenDownListing();
-    const res = await request(app).get(`/api/listings/${listing.id}`);
+    const res = await request(app).get(`/api/v1/listings/${listing.id}`);
     expect(res.status).toBe(404);
   });
 
   test("another logged-in user also gets a 404", async () => {
     const { listing } = await takenDownListing();
     const other = await createVerifiedUser(app, { email: `hideother${Math.random().toString(36).slice(2)}@example.com` });
-    const res = await other.agent.get(`/api/listings/${listing.id}`);
+    const res = await other.agent.get(`/api/v1/listings/${listing.id}`);
     expect(res.status).toBe(404);
   });
 
   test("the seller can still see it, so they know what was removed", async () => {
     const { seller, listing } = await takenDownListing();
-    const res = await seller.agent.get(`/api/listings/${listing.id}`);
+    const res = await seller.agent.get(`/api/v1/listings/${listing.id}`);
     expect(res.status).toBe(200);
     expect(res.body.listing.moderation_reason).toBeTruthy();
   });
 
   test("a moderator can still see it for review", async () => {
     const { admin, listing } = await takenDownListing();
-    const res = await admin.agent.get(`/api/listings/${listing.id}`);
+    const res = await admin.agent.get(`/api/v1/listings/${listing.id}`);
     expect(res.status).toBe(200);
   });
 });
@@ -265,7 +261,7 @@ describe("message length limit", () => {
     const buyer = await createVerifiedUser(app, { email: "lenbuyer@example.com" });
     const listing = await createListing(seller.agent);
 
-    const res = await buyer.agent.post("/api/messages/thread").send({
+    const res = await buyer.agent.post("/api/v1/messages/thread").send({
       listingId: listing.id, text: "A".repeat(5000),
     });
     expect(res.status).toBe(400);
@@ -276,7 +272,7 @@ describe("message length limit", () => {
     const buyer = await createVerifiedUser(app, { email: "lenokbuyer@example.com" });
     const listing = await createListing(seller.agent);
 
-    const res = await buyer.agent.post("/api/messages/thread").send({
+    const res = await buyer.agent.post("/api/v1/messages/thread").send({
       listingId: listing.id, text: "Is this still available?",
     });
     expect(res.status).toBe(201);
@@ -295,7 +291,7 @@ describe("dispute resolution", () => {
 
   async function disputedOrder(sellerEmail, buyerEmail) {
     const o = await paidOrder(sellerEmail, buyerEmail);
-    await o.buyer.agent.post(`/api/transactions/${o.transactionId}/dispute`).send({ reason: "Never arrived" });
+    await o.buyer.agent.post(`/api/v1/transactions/${o.transactionId}/dispute`).send({ reason: "Never arrived" });
     return o;
   }
 
@@ -303,7 +299,7 @@ describe("dispute resolution", () => {
     const admin = await makeAdmin();
     const { transactionId } = await disputedOrder("drs1@example.com", "drb1@example.com");
 
-    const res = await admin.agent.post(`/api/transactions/${transactionId}/resolve-dispute`)
+    const res = await admin.agent.post(`/api/v1/transactions/${transactionId}/resolve-dispute`)
       .send({ outcome: "refund", note: "Seller could not show proof of handover." });
     expect(res.status).toBe(200);
     expect(res.body.transaction.status).toBe("refunded");
@@ -318,7 +314,7 @@ describe("dispute resolution", () => {
     const during = await query("SELECT completed_sales_count FROM users WHERE id = $1", [seller.user.id]);
     expect(during.rows[0].completed_sales_count).toBe(0);
 
-    const res = await admin.agent.post(`/api/transactions/${transactionId}/resolve-dispute`)
+    const res = await admin.agent.post(`/api/v1/transactions/${transactionId}/resolve-dispute`)
       .send({ outcome: "uphold", note: "Tracking shows delivery." });
     expect(res.status).toBe(200);
     expect(res.body.transaction.status).toBe("completed");
@@ -332,14 +328,14 @@ describe("dispute resolution", () => {
   test("neither party can resolve their own dispute", async () => {
     const { buyer, seller, transactionId } = await disputedOrder("drs3@example.com", "drb3@example.com");
     const body = { outcome: "refund", note: "please" };
-    expect((await buyer.agent.post(`/api/transactions/${transactionId}/resolve-dispute`).send(body)).status).toBe(403);
-    expect((await seller.agent.post(`/api/transactions/${transactionId}/resolve-dispute`).send(body)).status).toBe(403);
+    expect((await buyer.agent.post(`/api/v1/transactions/${transactionId}/resolve-dispute`).send(body)).status).toBe(403);
+    expect((await seller.agent.post(`/api/v1/transactions/${transactionId}/resolve-dispute`).send(body)).status).toBe(403);
   });
 
   test("a resolution note is required, since disputes get re-examined later", async () => {
     const admin = await makeAdmin();
     const { transactionId } = await disputedOrder("drs4@example.com", "drb4@example.com");
-    const res = await admin.agent.post(`/api/transactions/${transactionId}/resolve-dispute`)
+    const res = await admin.agent.post(`/api/v1/transactions/${transactionId}/resolve-dispute`)
       .send({ outcome: "refund" });
     expect(res.status).toBe(400);
   });
@@ -347,7 +343,7 @@ describe("dispute resolution", () => {
   test("an order that isn't disputed can't be 'resolved'", async () => {
     const admin = await makeAdmin();
     const { transactionId } = await paidOrder("drs5@example.com", "drb5@example.com");
-    const res = await admin.agent.post(`/api/transactions/${transactionId}/resolve-dispute`)
+    const res = await admin.agent.post(`/api/v1/transactions/${transactionId}/resolve-dispute`)
       .send({ outcome: "refund", note: "n/a" });
     expect(res.status).toBe(409);
   });
@@ -355,10 +351,10 @@ describe("dispute resolution", () => {
   test("the resolution is attributed in the audit trail", async () => {
     const admin = await makeAdmin();
     const { buyer, transactionId } = await disputedOrder("drs6@example.com", "drb6@example.com");
-    await admin.agent.post(`/api/transactions/${transactionId}/resolve-dispute`)
+    await admin.agent.post(`/api/v1/transactions/${transactionId}/resolve-dispute`)
       .send({ outcome: "refund", note: "Refunded after review." });
 
-    const res = await buyer.agent.get(`/api/transactions/${transactionId}/history`);
+    const res = await buyer.agent.get(`/api/v1/transactions/${transactionId}/history`);
     const event = res.body.events.find((e) => e.to_status === "refunded");
     expect(event.actor_type).toBe("admin");
     expect(event.reason).toContain("Refunded after review");
@@ -378,7 +374,7 @@ describe("full journey: checkout -> paid -> fulfilled -> completed -> review", (
     const listing = await createListing(seller.agent, { title: "Journey stroller", priceCents: 2500 });
 
     // 1. Checkout reserves the item and creates a pending order.
-    const checkout = await buyer.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+    const checkout = await buyer.agent.post("/api/v1/transactions/checkout").send({ listingId: listing.id });
     expect(checkout.status).toBe(201);
     const id = checkout.body.transaction.id;
     expect(checkout.body.transaction.status).toBe("pending");
@@ -390,31 +386,31 @@ describe("full journey: checkout -> paid -> fulfilled -> completed -> review", (
     expect(afterPay.rows[0].paid_at).not.toBeNull();
 
     // The listing must leave the marketplace once it's sold.
-    const browse = await request(app).get("/api/listings?q=Journey%20stroller");
+    const browse = await request(app).get("/api/v1/listings?q=Journey%20stroller");
     expect(browse.body.listings.some((l) => l.id === listing.id)).toBe(false);
 
     // Payment alone must NOT credit the seller with a completed sale.
-    const midTrust = await request(app).get(`/api/users/${seller.user.id}`);
+    const midTrust = await request(app).get(`/api/v1/users/${seller.user.id}`);
     expect(midTrust.body.user.trust.completedSales).toBe(0);
 
     // 3. Seller hands it over.
-    expect((await seller.agent.post(`/api/transactions/${id}/fulfil`)).status).toBe(200);
+    expect((await seller.agent.post(`/api/v1/transactions/${id}/fulfil`)).status).toBe(200);
 
     // 4. Buyer confirms receipt - the only step that completes an order.
-    expect((await buyer.agent.post(`/api/transactions/${id}/confirm-receipt`)).status).toBe(200);
+    expect((await buyer.agent.post(`/api/v1/transactions/${id}/confirm-receipt`)).status).toBe(200);
 
     // 5. Review is now permitted (and was not, before completion).
-    const review = await buyer.agent.post("/api/reviews").send({
+    const review = await buyer.agent.post("/api/v1/reviews").send({
       revieweeId: seller.user.id, listingId: listing.id, rating: 5, comment: "Exactly as described.",
     });
     expect(review.status).toBe(201);
 
     // 6. Trust reflects a genuinely concluded sale.
-    const finalTrust = await request(app).get(`/api/users/${seller.user.id}`);
+    const finalTrust = await request(app).get(`/api/v1/users/${seller.user.id}`);
     expect(finalTrust.body.user.trust.completedSales).toBe(1);
 
     // 7. The audit trail tells the whole story, in order.
-    const history = await buyer.agent.get(`/api/transactions/${id}/history`);
+    const history = await buyer.agent.get(`/api/v1/transactions/${id}/history`);
     const statuses = history.body.events.map((e) => e.to_status);
     expect(statuses).toEqual(expect.arrayContaining(["paid", "fulfilled", "completed"]));
     expect(statuses.indexOf("paid")).toBeLessThan(statuses.indexOf("fulfilled"));
@@ -433,7 +429,7 @@ describe("checkout is atomic", () => {
     const buyer = await createVerifiedUser(app, { email: "atomicbuyer@example.com" });
     const listing = await createListing(seller.agent);
 
-    const checkout = await buyer.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+    const checkout = await buyer.agent.post("/api/v1/transactions/checkout").send({ listingId: listing.id });
     expect(checkout.status).toBe(201);
 
     const { rows } = await query(
@@ -469,9 +465,9 @@ describe("order status endpoint", () => {
     const buyer = await createVerifiedUser(app, { email: "statusbuyer@example.com" });
     const listing = await createListing(seller.agent);
 
-    const checkout = await buyer.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+    const checkout = await buyer.agent.post("/api/v1/transactions/checkout").send({ listingId: listing.id });
 
-    const res = await buyer.agent.get(`/api/transactions/${checkout.body.transaction.id}/status`);
+    const res = await buyer.agent.get(`/api/v1/transactions/${checkout.body.transaction.id}/status`);
     expect(res.status).toBe(200);
     expect(res.body.status).toBe("pending");
     // The flag the client actually polls on.
@@ -484,10 +480,10 @@ describe("order status endpoint", () => {
     const buyer = await createVerifiedUser(app, { email: "statusbuyer2@example.com" });
     const listing = await createListing(seller.agent);
 
-    const checkout = await buyer.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+    const checkout = await buyer.agent.post("/api/v1/transactions/checkout").send({ listingId: listing.id });
     await sendWebhook("payment_intent.succeeded", { id: checkout.body.transaction.stripe_payment_intent_id });
 
-    const res = await buyer.agent.get(`/api/transactions/${checkout.body.transaction.id}/status`);
+    const res = await buyer.agent.get(`/api/v1/transactions/${checkout.body.transaction.id}/status`);
     expect(res.body.status).toBe("paid");
     expect(res.body.settled).toBe(true);
     expect(res.body.paidAt).not.toBeNull();
@@ -497,9 +493,9 @@ describe("order status endpoint", () => {
     const seller = await createVerifiedUser(app, { email: "statusseller3@example.com" });
     const buyer = await createVerifiedUser(app, { email: "statusbuyer3@example.com" });
     const listing = await createListing(seller.agent);
-    const checkout = await buyer.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+    const checkout = await buyer.agent.post("/api/v1/transactions/checkout").send({ listingId: listing.id });
 
-    expect((await seller.agent.get(`/api/transactions/${checkout.body.transaction.id}/status`)).status).toBe(200);
+    expect((await seller.agent.get(`/api/v1/transactions/${checkout.body.transaction.id}/status`)).status).toBe(200);
   });
 
   // It's polled, so it must not become a way to enumerate other people's
@@ -509,13 +505,13 @@ describe("order status endpoint", () => {
     const buyer = await createVerifiedUser(app, { email: "statusbuyer4@example.com" });
     const stranger = await createVerifiedUser(app, { email: "statusstranger@example.com" });
     const listing = await createListing(seller.agent);
-    const checkout = await buyer.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+    const checkout = await buyer.agent.post("/api/v1/transactions/checkout").send({ listingId: listing.id });
 
-    expect((await stranger.agent.get(`/api/transactions/${checkout.body.transaction.id}/status`)).status).toBe(403);
+    expect((await stranger.agent.get(`/api/v1/transactions/${checkout.body.transaction.id}/status`)).status).toBe(403);
   });
 
   test("requires authentication", async () => {
-    expect((await request(app).get("/api/transactions/1/status")).status).toBe(401);
+    expect((await request(app).get("/api/v1/transactions/1/status")).status).toBe(401);
   });
 
   // A refunded or cancelled order is settled too - the client is asking
@@ -524,11 +520,11 @@ describe("order status endpoint", () => {
     const seller = await createVerifiedUser(app, { email: "statusseller5@example.com" });
     const buyer = await createVerifiedUser(app, { email: "statusbuyer5@example.com" });
     const listing = await createListing(seller.agent);
-    const checkout = await buyer.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+    const checkout = await buyer.agent.post("/api/v1/transactions/checkout").send({ listingId: listing.id });
 
     await query("UPDATE transactions SET status = 'cancelled' WHERE id = $1", [checkout.body.transaction.id]);
 
-    const res = await buyer.agent.get(`/api/transactions/${checkout.body.transaction.id}/status`);
+    const res = await buyer.agent.get(`/api/v1/transactions/${checkout.body.transaction.id}/status`);
     expect(res.body.settled).toBe(true);
     expect(res.body.status).toBe("cancelled");
   });

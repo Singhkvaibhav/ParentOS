@@ -20,7 +20,7 @@ const request = require("supertest");
 const app = require("../server");
 const { query } = require("../db");
 const { resetDb } = require("./dbReset");
-const { createVerifiedUser, makeSellerPayoutReady } = require("./helpers");
+const { createVerifiedUser, createListing: createListingBase } = require("./helpers");
 
 beforeAll(async () => {
   await app.dbReady;
@@ -28,41 +28,32 @@ beforeAll(async () => {
 });
 
 async function listingFor(agent, overrides = {}) {
-  const res = await agent.post("/api/listings").send({
-    category: "toys", title: "Privacy toy", priceCents: 1200,
-    condition: "Good", city: "Helsinki", area: "Kamppi", ...overrides,
-  });
-  if (!res.body.listing) {
-    console.log("LISTING CREATE DEBUG:", res.status, res.body);
-  }
-  if (!res.body.listing) { console.log("LISTING CREATE DEBUG:", res.status, res.body); }
-  await makeSellerPayoutReady(res.body.listing.seller_id);
-  return res.body.listing;
+  return createListingBase(agent, { category: "toys", title: "Privacy toy", priceCents: 1200, ...overrides });
 }
 
 async function completedSale(sellerAgent, buyerAgent, listingId) {
-  const checkout = await buyerAgent.post("/api/transactions/checkout").send({ listingId });
-  await request(app).post("/api/transactions/webhook")
+  const checkout = await buyerAgent.post("/api/v1/transactions/checkout").send({ listingId });
+  await request(app).post("/api/v1/transactions/webhook")
     .set("Content-Type", "application/json").set("stripe-signature", "m")
     .send(JSON.stringify({
       type: "payment_intent.succeeded",
       data: { object: { id: checkout.body.transaction.stripe_payment_intent_id } },
     }));
-  await buyerAgent.post(`/api/transactions/${checkout.body.transaction.id}/confirm-receipt`);
+  await buyerAgent.post(`/api/v1/transactions/${checkout.body.transaction.id}/confirm-receipt`);
   return checkout.body.transaction.id;
 }
 
 // GDPR Article 15 / 20.
 describe("data export", () => {
   test("requires authentication", async () => {
-    expect((await request(app).get("/api/privacy/export")).status).toBe(401);
+    expect((await request(app).get("/api/v1/privacy/export")).status).toBe(401);
   });
 
   test("returns the user's data as a downloadable file", async () => {
     const user = await createVerifiedUser(app, { email: "exportme@example.com" });
     await listingFor(user.agent, { title: "Exportable item" });
 
-    const res = await user.agent.get("/api/privacy/export");
+    const res = await user.agent.get("/api/v1/privacy/export");
     expect(res.status).toBe(200);
     expect(res.headers["content-disposition"]).toContain("attachment");
 
@@ -82,13 +73,13 @@ describe("data export", () => {
     const buyer = await createVerifiedUser(app, { email: "exportbuyer@example.com" });
     const listing = await listingFor(seller.agent);
 
-    const thread = await buyer.agent.post("/api/messages/thread").send({
+    const thread = await buyer.agent.post("/api/v1/messages/thread").send({
       listingId: listing.id, text: "BUYER_SECRET_TEXT",
     });
-    await seller.agent.post(`/api/messages/conversations/${thread.body.conversation.id}/reply`)
+    await seller.agent.post(`/api/v1/messages/conversations/${thread.body.conversation.id}/reply`)
       .send({ text: "SELLER_SECRET_TEXT" });
 
-    const buyerExport = JSON.parse((await buyer.agent.get("/api/privacy/export")).text);
+    const buyerExport = JSON.parse((await buyer.agent.get("/api/v1/privacy/export")).text);
     const texts = buyerExport.messagesYouSent.map((m) => m.text);
     expect(texts).toContain("BUYER_SECRET_TEXT");
     expect(texts).not.toContain("SELLER_SECRET_TEXT");
@@ -104,25 +95,25 @@ describe("account deletion", () => {
 
     // Paid but not confirmed - deleting now would leave the buyer with no
     // counterparty and no recourse.
-    const checkout = await buyer.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
-    await request(app).post("/api/transactions/webhook")
+    const checkout = await buyer.agent.post("/api/v1/transactions/checkout").send({ listingId: listing.id });
+    await request(app).post("/api/v1/transactions/webhook")
       .set("Content-Type", "application/json").set("stripe-signature", "m")
       .send(JSON.stringify({
         type: "payment_intent.succeeded",
         data: { object: { id: checkout.body.transaction.stripe_payment_intent_id } },
       }));
 
-    const status = await seller.agent.get("/api/privacy/deletion-status");
+    const status = await seller.agent.get("/api/v1/privacy/deletion-status");
     expect(status.body.blockers.length).toBeGreaterThan(0);
 
-    const res = await seller.agent.post("/api/privacy/delete-account")
+    const res = await seller.agent.post("/api/v1/privacy/delete-account")
       .send({ confirmEmail: "blockedseller@example.com" });
     expect(res.status).toBe(409);
   });
 
   test("requires the user to type their own email", async () => {
     const user = await createVerifiedUser(app, { email: "confirmdel@example.com" });
-    const res = await user.agent.post("/api/privacy/delete-account").send({ confirmEmail: "wrong@example.com" });
+    const res = await user.agent.post("/api/v1/privacy/delete-account").send({ confirmEmail: "wrong@example.com" });
     expect(res.status).toBe(400);
   });
 
@@ -132,7 +123,7 @@ describe("account deletion", () => {
     const listing = await listingFor(seller.agent, { title: "Sold before deletion" });
     const transactionId = await completedSale(seller.agent, buyer.agent, listing.id);
 
-    const res = await buyer.agent.post("/api/privacy/delete-account")
+    const res = await buyer.agent.post("/api/v1/privacy/delete-account")
       .send({ confirmEmail: "delbuyer@example.com" });
     expect(res.status).toBe(200);
 
@@ -153,11 +144,11 @@ describe("account deletion", () => {
     const seller = await createVerifiedUser(app, { email: "msgdelseller@example.com" });
     const buyer = await createVerifiedUser(app, { email: "msgdelbuyer@example.com" });
     const listing = await listingFor(seller.agent);
-    const thread = await buyer.agent.post("/api/messages/thread").send({
+    const thread = await buyer.agent.post("/api/v1/messages/thread").send({
       listingId: listing.id, text: "PLEASE_ERASE_ME",
     });
 
-    await buyer.agent.post("/api/privacy/delete-account").send({ confirmEmail: "msgdelbuyer@example.com" });
+    await buyer.agent.post("/api/v1/privacy/delete-account").send({ confirmEmail: "msgdelbuyer@example.com" });
 
     const { rows } = await query(
       "SELECT text FROM messages WHERE conversation_id = $1 AND sender_id = $2",
@@ -171,10 +162,10 @@ describe("account deletion", () => {
   test("a deleted account can't log back in", async () => {
     const { csrfAgent } = require("./helpers");
     const user = await createVerifiedUser(app, { email: "nologin@example.com" });
-    await user.agent.post("/api/privacy/delete-account").send({ confirmEmail: "nologin@example.com" });
+    await user.agent.post("/api/v1/privacy/delete-account").send({ confirmEmail: "nologin@example.com" });
 
     const agent = await csrfAgent(app);
-    const res = await agent.post("/api/auth/login").send({ email: "nologin@example.com", password: "testpass123" });
+    const res = await agent.post("/api/v1/auth/login").send({ email: "nologin@example.com", password: "testpass123" });
     expect(res.status).toBe(401);
   });
 
@@ -182,12 +173,12 @@ describe("account deletion", () => {
     const { csrfAgent } = require("./helpers");
     const email = "reusable@example.com";
     const user = await createVerifiedUser(app, { email });
-    await user.agent.post("/api/privacy/delete-account").send({ confirmEmail: email });
+    await user.agent.post("/api/v1/privacy/delete-account").send({ confirmEmail: email });
 
     // The old row keeps a rewritten address, so the UNIQUE constraint no
     // longer blocks the real address being registered again.
     const agent = await csrfAgent(app);
-    const signup = await agent.post("/api/auth/signup").send({
+    const signup = await agent.post("/api/v1/auth/signup").send({
       name: "New Person", email, password: "testpass123",
     });
     expect(signup.status).toBe(200);
@@ -198,11 +189,11 @@ describe("account deletion", () => {
     const buyer = await createVerifiedUser(app, { email: "revsurvbuyer@example.com" });
     const listing = await listingFor(seller.agent);
     await completedSale(seller.agent, buyer.agent, listing.id);
-    await buyer.agent.post("/api/reviews").send({
+    await buyer.agent.post("/api/v1/reviews").send({
       revieweeId: seller.user.id, listingId: listing.id, rating: 5, comment: "Great",
     });
 
-    await buyer.agent.post("/api/privacy/delete-account").send({ confirmEmail: "revsurvbuyer@example.com" });
+    await buyer.agent.post("/api/v1/privacy/delete-account").send({ confirmEmail: "revsurvbuyer@example.com" });
 
     const { rows } = await query("SELECT rating FROM reviews WHERE reviewee_id = $1", [seller.user.id]);
     // The seller's rating is other users' information about them; erasing
@@ -224,7 +215,7 @@ describe("deleting a seller who has sold something", () => {
     const listing = await listingFor(seller.agent, { title: "Sold before deletion" });
     await completedSale(seller.agent, buyer.agent, listing.id);
 
-    const res = await seller.agent.post("/api/privacy/delete-account")
+    const res = await seller.agent.post("/api/v1/privacy/delete-account")
       .send({ confirmEmail: "solddelete@example.com" });
     expect(res.status).toBe(200);
   });
@@ -235,7 +226,7 @@ describe("deleting a seller who has sold something", () => {
     const listing = await listingFor(seller.agent, { title: "Located item" });
     await completedSale(seller.agent, buyer.agent, listing.id);
 
-    await seller.agent.post("/api/privacy/delete-account").send({ confirmEmail: "locdelete@example.com" });
+    await seller.agent.post("/api/v1/privacy/delete-account").send({ confirmEmail: "locdelete@example.com" });
 
     const { rows } = await query(
       "SELECT title, city, area, pincode, lat, lng, description, photo_url FROM listings WHERE id = $1",

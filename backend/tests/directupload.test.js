@@ -33,11 +33,11 @@ async function jpegWithGpsExif() {
 describe("presigned direct upload", () => {
   test("requires authentication", async () => {
     const request = require("supertest");
-    expect((await request(app).post("/api/uploads/presign").send({})).status).toBe(403);
+    expect((await request(app).post("/api/v1/uploads/presign").send({})).status).toBe(403);
   });
 
   test("issues an upload URL targeting quarantine, not the public prefix", async () => {
-    const res = await agent.post("/api/uploads/presign").send({ contentType: "image/jpeg" });
+    const res = await agent.post("/api/v1/uploads/presign").send({ contentType: "image/jpeg" });
     expect(res.status).toBe(200);
     expect(res.body.key).toMatch(/^quarantine\//);
     expect(res.body.uploadUrl).toBeTruthy();
@@ -45,7 +45,7 @@ describe("presigned direct upload", () => {
   });
 
   test("refuses to presign a non-image content type", async () => {
-    const res = await agent.post("/api/uploads/presign").send({ contentType: "application/x-sh" });
+    const res = await agent.post("/api/v1/uploads/presign").send({ contentType: "application/x-sh" });
     expect(res.status).toBe(400);
   });
 
@@ -53,14 +53,14 @@ describe("presigned direct upload", () => {
   // rather than trusted to overwrite an already-public object.
   test("a client can't redirect the upload at the public prefix", async () => {
     const res = await agent
-      .put(`/api/uploads/direct/${encodeURIComponent("listings/existing.jpg")}`)
+      .put(`/api/v1/uploads/direct/${encodeURIComponent("listings/existing.jpg")}`)
       .set("Content-Type", "image/jpeg")
       .send(Buffer.from("x"));
     expect(res.status).toBe(400);
   });
 
   test("finalize refuses a key that isn't in quarantine", async () => {
-    const res = await agent.post("/api/uploads/finalize").send({ key: "listings/existing.jpg" });
+    const res = await agent.post("/api/v1/uploads/finalize").send({ key: "listings/existing.jpg" });
     expect(res.status).toBe(400);
   });
 
@@ -70,13 +70,13 @@ describe("presigned direct upload", () => {
     // Confirm the fixture genuinely carries GPS, or the test proves nothing.
     expect((await sharp(original).metadata()).exif).toBeDefined();
 
-    const presign = await agent.post("/api/uploads/presign").send({ contentType: "image/jpeg" });
+    const presign = await agent.post("/api/v1/uploads/presign").send({ contentType: "image/jpeg" });
     const { key, uploadUrl } = presign.body;
 
     const put = await agent.put(uploadUrl).set("Content-Type", "image/jpeg").send(original);
     expect(put.status).toBe(200);
 
-    const finalize = await agent.post("/api/uploads/finalize").send({ key });
+    const finalize = await agent.post("/api/v1/uploads/finalize").send({ key });
     expect(finalize.status).toBe(200);
     expect(finalize.body.url).toBeTruthy();
     expect(finalize.body.key).toMatch(/^listings\//);
@@ -90,10 +90,10 @@ describe("presigned direct upload", () => {
   });
 
   test("garbage that isn't an image is rejected at finalize, not published", async () => {
-    const presign = await agent.post("/api/uploads/presign").send({ contentType: "image/jpeg" });
+    const presign = await agent.post("/api/v1/uploads/presign").send({ contentType: "image/jpeg" });
     await agent.put(presign.body.uploadUrl).set("Content-Type", "image/jpeg").send(Buffer.from("not an image at all"));
 
-    const finalize = await agent.post("/api/uploads/finalize").send({ key: presign.body.key });
+    const finalize = await agent.post("/api/v1/uploads/finalize").send({ key: presign.body.key });
     expect(finalize.status).toBe(400);
   });
 });
@@ -114,7 +114,7 @@ describe("upload keys are tied to the user who requested them", () => {
 
   test("a presign records the key against the requesting user", async () => {
     const { query } = require("../db");
-    const res = await owner.agent.post("/api/uploads/presign").send({ contentType: "image/jpeg" });
+    const res = await owner.agent.post("/api/v1/uploads/presign").send({ contentType: "image/jpeg" });
     expect(res.status).toBe(200);
 
     const { rows } = await query("SELECT user_id, status FROM uploads WHERE storage_key = $1", [res.body.key]);
@@ -123,7 +123,7 @@ describe("upload keys are tied to the user who requested them", () => {
   });
 
   test("another user cannot write to someone else's quarantine key", async () => {
-    const presign = await owner.agent.post("/api/uploads/presign").send({ contentType: "image/jpeg" });
+    const presign = await owner.agent.post("/api/v1/uploads/presign").send({ contentType: "image/jpeg" });
 
     const res = await attacker.agent
       .put(presign.body.uploadUrl)
@@ -136,22 +136,22 @@ describe("upload keys are tied to the user who requested them", () => {
   });
 
   test("another user cannot finalize someone else's upload", async () => {
-    const presign = await owner.agent.post("/api/uploads/presign").send({ contentType: "image/jpeg" });
+    const presign = await owner.agent.post("/api/v1/uploads/presign").send({ contentType: "image/jpeg" });
     const jpeg = await sharp({ create: { width: 20, height: 20, channels: 3, background: { r: 1, g: 2, b: 3 } } })
       .jpeg().toBuffer();
     await owner.agent.put(presign.body.uploadUrl).set("Content-Type", "image/jpeg").send(jpeg);
 
-    const res = await attacker.agent.post("/api/uploads/finalize").send({ key: presign.body.key });
+    const res = await attacker.agent.post("/api/v1/uploads/finalize").send({ key: presign.body.key });
     expect(res.status).toBe(404);
   });
 
   test("the owner's own flow still works end to end", async () => {
-    const presign = await owner.agent.post("/api/uploads/presign").send({ contentType: "image/jpeg" });
+    const presign = await owner.agent.post("/api/v1/uploads/presign").send({ contentType: "image/jpeg" });
     const jpeg = await sharp({ create: { width: 20, height: 20, channels: 3, background: { r: 9, g: 9, b: 9 } } })
       .jpeg().toBuffer();
 
     expect((await owner.agent.put(presign.body.uploadUrl).set("Content-Type", "image/jpeg").send(jpeg)).status).toBe(200);
-    const finalize = await owner.agent.post("/api/uploads/finalize").send({ key: presign.body.key });
+    const finalize = await owner.agent.post("/api/v1/uploads/finalize").send({ key: presign.body.key });
     expect(finalize.status).toBe(200);
 
     const { query } = require("../db");
@@ -161,13 +161,13 @@ describe("upload keys are tied to the user who requested them", () => {
   });
 
   test("a key that was never issued is rejected", async () => {
-    const res = await owner.agent.post("/api/uploads/finalize")
+    const res = await owner.agent.post("/api/v1/uploads/finalize")
       .send({ key: "quarantine/00000000-0000-0000-0000-000000000000.upload" });
     expect(res.status).toBe(404);
   });
 
   test("an upload can't be written twice", async () => {
-    const presign = await owner.agent.post("/api/uploads/presign").send({ contentType: "image/jpeg" });
+    const presign = await owner.agent.post("/api/v1/uploads/presign").send({ contentType: "image/jpeg" });
     const jpeg = await sharp({ create: { width: 10, height: 10, channels: 3, background: { r: 5, g: 5, b: 5 } } })
       .jpeg().toBuffer();
 
@@ -178,7 +178,7 @@ describe("upload keys are tied to the user who requested them", () => {
 
   test("an expired presign is refused", async () => {
     const { query } = require("../db");
-    const presign = await owner.agent.post("/api/uploads/presign").send({ contentType: "image/jpeg" });
+    const presign = await owner.agent.post("/api/v1/uploads/presign").send({ contentType: "image/jpeg" });
     await query("UPDATE uploads SET expires_at = now() - interval '1 minute' WHERE storage_key = $1", [presign.body.key]);
 
     const res = await owner.agent.put(presign.body.uploadUrl)
@@ -191,7 +191,7 @@ describe("upload keys are tied to the user who requested them", () => {
   test("abandoned uploads can be swept", async () => {
     const { query } = require("../db");
     const { sweepAbandoned } = require("../services/uploadService");
-    const presign = await owner.agent.post("/api/uploads/presign").send({ contentType: "image/jpeg" });
+    const presign = await owner.agent.post("/api/v1/uploads/presign").send({ contentType: "image/jpeg" });
     await query("UPDATE uploads SET expires_at = now() - interval '2 hours' WHERE storage_key = $1", [presign.body.key]);
 
     const result = await sweepAbandoned();

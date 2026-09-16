@@ -1,6 +1,6 @@
 // Validates that route param(s) look like a positive integer database id
 // BEFORE a query ever runs. Without this, a non-numeric value (e.g.
-// /api/listings/not-a-number) reaches Postgres as a raw type-conversion
+// /api/v1/listings/not-a-number) reaches Postgres as a raw type-conversion
 // error ("invalid input syntax for type integer"), which the generic error
 // handler turns into an unhelpful 500 instead of a clean 400 - the same
 // class of bug as the favorites FK-violation fix, but this one is the

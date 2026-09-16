@@ -1,3 +1,5 @@
+const { API_PREFIX } = require("../config");
+
 // Shared cookie settings for the auth token, so login/verify (which set it)
 // and logout (which clears it) can't drift out of sync with each other.
 //
@@ -23,15 +25,15 @@ const COOKIE_MAX_AGE_MS = 15 * 60 * 1000; // 15 minutes, matching ACCESS_TOKEN_T
 // ordinary API calls, so the long-lived credential isn't exposed on every
 // request the way a single 30-day cookie was.
 const REFRESH_COOKIE_NAME = "parentos_refresh";
-// Scoped to /api/auth rather than just /api/auth/refresh: logout also has
-// to see this cookie in order to REVOKE the token server-side, and a
-// cookie scoped to the refresh path alone is never sent to /api/auth/logout
-// - so logout could only clear the browser's copy while leaving the token
-// itself valid for anyone who had captured it.
+// Scoped to /api/v1/auth rather than just /api/v1/auth/refresh: logout also
+// has to see this cookie in order to REVOKE the token server-side, and a
+// cookie scoped to the refresh path alone is never sent to
+// /api/v1/auth/logout - so logout could only clear the browser's copy
+// while leaving the token itself valid for anyone who had captured it.
 //
 // Still keeps the long-lived credential off every ordinary API request
-// (/api/listings, /api/messages and so on), which was the point.
-const REFRESH_COOKIE_PATH = "/api/auth";
+// (/api/v1/listings, /api/v1/messages and so on), which was the point.
+const REFRESH_COOKIE_PATH = `${API_PREFIX}/auth`;
 const REFRESH_COOKIE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 // Attributes that must match between setting and clearing for the browser

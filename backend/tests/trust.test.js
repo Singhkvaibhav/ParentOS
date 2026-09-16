@@ -21,7 +21,7 @@ jest.mock("stripe", () => jest.fn().mockImplementation(() => ({
 const app = require("../server");
 const { query } = require("../db");
 const { resetDb } = require("./dbReset");
-const { createVerifiedUser, makeSellerPayoutReady } = require("./helpers");
+const { createVerifiedUser, createListing: createListingBase } = require("./helpers");
 const { summarize, MIN_RATING_COUNT_TO_DISPLAY } = require("../services/trustService");
 
 beforeAll(async () => {
@@ -30,19 +30,15 @@ beforeAll(async () => {
 });
 
 async function createListing(sellerAgent, overrides = {}) {
-  const res = await sellerAgent.post("/api/listings").send({
-    category: "toys", title: "Trust test toy", priceCents: 1000, condition: "Good", city: "Helsinki", area: "Kamppi", ...overrides,
-  });
-  await makeSellerPayoutReady(res.body.listing.seller_id);
-  return res.body.listing;
+  return createListingBase(sellerAgent, { category: "toys", title: "Trust test toy", priceCents: 1000, ...overrides });
 }
 
 // Pays for a listing. This settles the money but deliberately stops at
 // 'paid' - the deal is NOT concluded until the buyer confirms receipt.
 async function payForListing(buyerAgent, listingId) {
-  const checkout = await buyerAgent.post("/api/transactions/checkout").send({ listingId });
+  const checkout = await buyerAgent.post("/api/v1/transactions/checkout").send({ listingId });
   await request(app)
-    .post("/api/transactions/webhook")
+    .post("/api/v1/transactions/webhook")
     .set("Content-Type", "application/json")
     .set("stripe-signature", "mocked")
     .send(JSON.stringify({
@@ -55,7 +51,7 @@ async function payForListing(buyerAgent, listingId) {
 // Pays AND has the buyer confirm receipt - the full path to 'completed'.
 async function completeSale(buyerAgent, listingId) {
   const transactionId = await payForListing(buyerAgent, listingId);
-  await buyerAgent.post(`/api/transactions/${transactionId}/confirm-receipt`);
+  await buyerAgent.post(`/api/v1/transactions/${transactionId}/confirm-receipt`);
   return transactionId;
 }
 
@@ -121,7 +117,7 @@ describe("trust counters update from real activity", () => {
     const listing = await createListing(seller.agent);
     await payForListing(buyer.agent, listing.id);
 
-    const res = await request(app).get(`/api/users/${seller.user.id}`);
+    const res = await request(app).get(`/api/v1/users/${seller.user.id}`);
     expect(res.body.user.trust.completedSales).toBe(0);
     expect(res.body.user.trust.level).toBe("new");
   });
@@ -137,7 +133,7 @@ describe("trust counters update from real activity", () => {
     const before = await query("SELECT completed_sales_count FROM users WHERE id = $1", [seller.user.id]);
     expect(before.rows[0].completed_sales_count).toBe(1);
 
-    await buyer.agent.post(`/api/transactions/${transactionId}/dispute`).send({ reason: "Item never arrived" });
+    await buyer.agent.post(`/api/v1/transactions/${transactionId}/dispute`).send({ reason: "Item never arrived" });
 
     const after = await query("SELECT completed_sales_count FROM users WHERE id = $1", [seller.user.id]);
     expect(after.rows[0].completed_sales_count).toBe(0);
@@ -166,7 +162,7 @@ describe("trust counters update from real activity", () => {
     const listing = await createListing(seller.agent);
     await completeSale(buyer.agent, listing.id);
 
-    await buyer.agent.post("/api/reviews").send({
+    await buyer.agent.post("/api/v1/reviews").send({
       revieweeId: seller.user.id, listingId: listing.id, rating: 4, comment: "Good",
     });
 
@@ -184,7 +180,7 @@ describe("trust is visible where buyers decide", () => {
     await completeSale(buyer.agent, first.id);
     await createListing(seller.agent, { title: "Trust card item two" });
 
-    const res = await request(app).get("/api/listings?q=Trust%20card");
+    const res = await request(app).get("/api/v1/listings?q=Trust%20card");
     const listing = res.body.listings.find((l) => l.title === "Trust card item two");
     expect(listing.sellerTrust).toBeDefined();
     expect(listing.sellerTrust.completedSales).toBe(1);
@@ -195,7 +191,7 @@ describe("trust is visible where buyers decide", () => {
     const seller = await createVerifiedUser(app, { email: "leakseller@example.com" });
     await createListing(seller.agent, { title: "Leak check item" });
 
-    const res = await request(app).get("/api/listings?q=Leak%20check");
+    const res = await request(app).get("/api/v1/listings?q=Leak%20check");
     const listing = res.body.listings[0];
     expect(listing.seller_rating_sum).toBeUndefined();
     expect(listing.seller_rating_count).toBeUndefined();
@@ -204,7 +200,7 @@ describe("trust is visible where buyers decide", () => {
 
   test("the public profile exposes the trust summary", async () => {
     const seller = await createVerifiedUser(app, { email: "profiletrust@example.com" });
-    const res = await request(app).get(`/api/users/${seller.user.id}`);
+    const res = await request(app).get(`/api/v1/users/${seller.user.id}`);
     expect(res.body.user.trust).toBeDefined();
     expect(res.body.user.trust.level).toBe("new");
     expect(res.body.user.trust.completedSales).toBe(0);
@@ -212,7 +208,7 @@ describe("trust is visible where buyers decide", () => {
 
   test("the profile still never exposes email", async () => {
     const seller = await createVerifiedUser(app, { email: "stillnoemail@example.com" });
-    const res = await request(app).get(`/api/users/${seller.user.id}`);
+    const res = await request(app).get(`/api/v1/users/${seller.user.id}`);
     expect(res.body.user.email).toBeUndefined();
   });
 });

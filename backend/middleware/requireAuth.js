@@ -20,7 +20,7 @@ async function requireAuth(req, res, next) {
   // being that page JS can never read the token. A native mobile client
   // has no browser cookie jar to rely on, so it authenticates instead with
   // a manually-attached `Authorization: Bearer <token>` header (issued by
-  // the /api/auth/mobile/* routes). Same JWT, same verification below -
+  // the /api/v1/auth/mobile/* routes). Same JWT, same verification below -
   // only where it's read from differs, so a stolen mobile token is exactly
   // as revocable (via session_version) as a stolen web cookie.
   const bearerMatch = req.get("authorization")?.match(/^Bearer (.+)$/i);

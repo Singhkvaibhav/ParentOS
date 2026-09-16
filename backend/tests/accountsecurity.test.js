@@ -20,7 +20,7 @@ beforeAll(async () => {
 describe("password reset", () => {
   test("reports success for an unknown address, so it can't be used to find out who has an account", async () => {
     const agent = await csrfAgent(app);
-    const res = await agent.post("/api/auth/forgot-password").send({ email: "nobody@example.com" });
+    const res = await agent.post("/api/v1/auth/forgot-password").send({ email: "nobody@example.com" });
     expect(res.status).toBe(200);
     // Identical shape to the real case - an anonymous caller learns nothing.
     expect(res.body.ok).toBe(true);
@@ -42,7 +42,7 @@ describe("password reset", () => {
     await security.resetPassword(raw, "brand-new-password");
 
     const agent = await csrfAgent(app);
-    const login = await agent.post("/api/auth/login").send({
+    const login = await agent.post("/api/v1/auth/login").send({
       email: "resetme@example.com", password: "brand-new-password",
     });
     expect(login.status).toBe(200);
@@ -99,7 +99,7 @@ describe("account lockout", () => {
     let lastStatus = 0;
     for (let i = 0; i < security.MAX_FAILED_LOGINS + 1; i++) {
       const agent = await csrfAgent(app);
-      const res = await agent.post("/api/auth/login").send({ email, password: "wrong-password" });
+      const res = await agent.post("/api/v1/auth/login").send({ email, password: "wrong-password" });
       lastStatus = res.status;
     }
     // 429 rather than 401: the account is throttled, not merely wrong.
@@ -119,7 +119,7 @@ describe("account lockout", () => {
     await query("UPDATE users SET failed_login_count = 3 WHERE id = $1", [user.user.id]);
 
     const agent = await csrfAgent(app);
-    await agent.post("/api/auth/login").send({ email, password: "testpass123" });
+    await agent.post("/api/v1/auth/login").send({ email, password: "testpass123" });
 
     const { rows } = await query("SELECT failed_login_count FROM users WHERE id = $1", [user.user.id]);
     expect(rows[0].failed_login_count).toBe(0);
@@ -132,8 +132,8 @@ describe("login history and suspicious logins", () => {
     const user = await createVerifiedUser(app, { email });
 
     const agent = await csrfAgent(app);
-    await agent.post("/api/auth/login").send({ email, password: "wrong" });
-    await agent.post("/api/auth/login").send({ email, password: "testpass123" });
+    await agent.post("/api/v1/auth/login").send({ email, password: "wrong" });
+    await agent.post("/api/v1/auth/login").send({ email, password: "testpass123" });
 
     const { rows } = await query("SELECT outcome FROM login_events WHERE user_id = $1", [user.user.id]);
     const outcomes = rows.map((r) => r.outcome);
@@ -158,7 +158,7 @@ describe("login history and suspicious logins", () => {
 
   test("a user can read their own login history", async () => {
     const user = await createVerifiedUser(app, { email: "readhistory@example.com" });
-    const res = await user.agent.get("/api/auth/login-history");
+    const res = await user.agent.get("/api/v1/auth/login-history");
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body.events)).toBe(true);
   });
@@ -356,7 +356,7 @@ describe("session model is access + rotating refresh", () => {
     await createVerifiedUser(app, { email });
 
     const agent = await csrfAgent(app);
-    const res = await agent.post("/api/auth/login").send({ email, password: "testpass123" });
+    const res = await agent.post("/api/v1/auth/login").send({ email, password: "testpass123" });
     expect(res.status).toBe(200);
 
     const cookies = res.headers["set-cookie"].join(";");
@@ -372,13 +372,13 @@ describe("session model is access + rotating refresh", () => {
     await createVerifiedUser(app, { email });
 
     const agent = await csrfAgent(app);
-    const res = await agent.post("/api/auth/login").send({ email, password: "testpass123" });
+    const res = await agent.post("/api/v1/auth/login").send({ email, password: "testpass123" });
     const refreshCookie = res.headers["set-cookie"].find((c) => c.startsWith("parentos_refresh="));
 
     expect(refreshCookie).toBeTruthy();
     // Path-scoped so the long-lived credential isn't attached to every
     // ordinary API request the way a single 30-day cookie was.
-    expect(refreshCookie).toContain("Path=/api/auth");
+    expect(refreshCookie).toContain("Path=/api/v1/auth");
     expect(refreshCookie).toContain("HttpOnly");
   });
 
@@ -387,10 +387,10 @@ describe("session model is access + rotating refresh", () => {
     await createVerifiedUser(app, { email });
 
     const agent = await csrfAgent(app);
-    const login = await agent.post("/api/auth/login").send({ email, password: "testpass123" });
+    const login = await agent.post("/api/v1/auth/login").send({ email, password: "testpass123" });
     const firstRefresh = /parentos_refresh=([^;]+)/.exec(login.headers["set-cookie"].join(";"))[1];
 
-    const refreshed = await agent.post("/api/auth/refresh");
+    const refreshed = await agent.post("/api/v1/auth/refresh");
     expect(refreshed.status).toBe(200);
 
     const secondRefresh = /parentos_refresh=([^;]+)/.exec(refreshed.headers["set-cookie"].join(";"))[1];
@@ -402,10 +402,10 @@ describe("session model is access + rotating refresh", () => {
     await createVerifiedUser(app, { email });
 
     const agent = await csrfAgent(app);
-    await agent.post("/api/auth/login").send({ email, password: "testpass123" });
-    await agent.post("/api/auth/refresh");
+    await agent.post("/api/v1/auth/login").send({ email, password: "testpass123" });
+    await agent.post("/api/v1/auth/refresh");
 
-    const me = await agent.get("/api/auth/me");
+    const me = await agent.get("/api/v1/auth/me");
     expect(me.status).toBe(200);
     expect(me.body.user.email).toBe(email);
   });
@@ -417,10 +417,10 @@ describe("session model is access + rotating refresh", () => {
     await createVerifiedUser(app, { email });
 
     const agent = await csrfAgent(app);
-    const login = await agent.post("/api/auth/login").send({ email, password: "testpass123" });
+    const login = await agent.post("/api/v1/auth/login").send({ email, password: "testpass123" });
     const raw = /parentos_refresh=([^;]+)/.exec(login.headers["set-cookie"].join(";"))[1];
 
-    await agent.post("/api/auth/logout");
+    await agent.post("/api/v1/auth/logout");
 
     const { rows } = await query(
       "SELECT revoked_at, revoked_reason FROM refresh_tokens WHERE token_hash = $1",
@@ -439,21 +439,21 @@ describe("session model is access + rotating refresh", () => {
 
     const deviceA = await csrfAgent(app);
     const deviceB = await csrfAgent(app);
-    await deviceA.post("/api/auth/login").send({ email, password: "testpass123" });
-    await deviceB.post("/api/auth/login").send({ email, password: "testpass123" });
+    await deviceA.post("/api/v1/auth/login").send({ email, password: "testpass123" });
+    await deviceB.post("/api/v1/auth/login").send({ email, password: "testpass123" });
 
-    await deviceA.post("/api/auth/logout-everywhere");
+    await deviceA.post("/api/v1/auth/logout-everywhere");
 
-    const bRefresh = await deviceB.post("/api/auth/refresh");
+    const bRefresh = await deviceB.post("/api/v1/auth/refresh");
     expect(bRefresh.status).toBe(401);
 
     // The device that initiated it stays signed in.
-    expect((await deviceA.get("/api/auth/me")).status).toBe(200);
+    expect((await deviceA.get("/api/v1/auth/me")).status).toBe(200);
   });
 
   test("refreshing without a cookie is refused", async () => {
     const agent = await csrfAgent(app);
-    expect((await agent.post("/api/auth/refresh")).status).toBe(401);
+    expect((await agent.post("/api/v1/auth/refresh")).status).toBe(401);
   });
 });
 
@@ -467,10 +467,10 @@ describe("access tokens have one definition", () => {
     await createVerifiedUser(app, { email });
 
     const agent = await csrfAgent(app);
-    const login = await agent.post("/api/auth/login").send({ email, password: "testpass123" });
+    const login = await agent.post("/api/v1/auth/login").send({ email, password: "testpass123" });
     const loginToken = /parentos_token=([^;]+)/.exec(login.headers["set-cookie"].join(";"))[1];
 
-    const refreshed = await agent.post("/api/auth/refresh");
+    const refreshed = await agent.post("/api/v1/auth/refresh");
     const refreshToken = /parentos_token=([^;]+)/.exec(refreshed.headers["set-cookie"].join(";"))[1];
 
     const a = jwt.decode(decodeURIComponent(loginToken));

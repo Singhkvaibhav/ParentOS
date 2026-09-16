@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from "react";
 import { metaService } from "../../../services/meta";
 import { categoryMeta, CATEGORY_METADATA } from "../../../constants";
 
-// Marketplace rules come from the backend (GET /api/meta/config), which is
+// Marketplace rules come from the backend (GET /api/v1/meta/config), which is
 // the only place that decides what a valid category, condition, price or
 // limit is - because it's the only place that enforces them.
 //

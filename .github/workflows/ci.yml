@@ -209,9 +209,9 @@ jobs:
             });
             (async () => {
               await check('/api/health', 200);
-              await check('/api/listings', 200);
-              await check('/api/meta/config', 200);
-              await check('/api/transactions/mine', 401);
+              await check('/api/v1/listings', 200);
+              await check('/api/v1/meta/config', 200);
+              await check('/api/v1/transactions/mine', 401);
               console.log('stack smoke test passed');
             })().catch((e) => { console.error(e.message); process.exit(1); });
           "

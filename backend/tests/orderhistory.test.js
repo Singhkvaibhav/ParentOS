@@ -21,7 +21,7 @@ jest.mock("stripe", () => jest.fn().mockImplementation(() => ({
 const app = require("../server");
 const { query } = require("../db");
 const { resetDb } = require("./dbReset");
-const { createVerifiedUser, makeSellerPayoutReady } = require("./helpers");
+const { createVerifiedUser, createListing: createListingBase } = require("./helpers");
 
 beforeAll(async () => {
   await app.dbReady;
@@ -29,15 +29,11 @@ beforeAll(async () => {
 });
 
 async function createListing(sellerAgent, overrides = {}) {
-  const res = await sellerAgent.post("/api/listings").send({
-    category: "toys", title: "History toy", priceCents: 1500, condition: "Good", city: "Helsinki", area: "Kamppi", ...overrides,
-  });
-  await makeSellerPayoutReady(res.body.listing.seller_id);
-  return res.body.listing;
+  return createListingBase(sellerAgent, { category: "toys", title: "History toy", priceCents: 1500, ...overrides });
 }
 
 function sendWebhook(type, object) {
-  return request(app).post("/api/transactions/webhook")
+  return request(app).post("/api/v1/transactions/webhook")
     .set("Content-Type", "application/json").set("stripe-signature", "mocked")
     .send(JSON.stringify({ type, data: { object } }));
 }
@@ -46,7 +42,7 @@ async function paidOrder(sellerEmail, buyerEmail) {
   const seller = await createVerifiedUser(app, { email: sellerEmail });
   const buyer = await createVerifiedUser(app, { email: buyerEmail });
   const listing = await createListing(seller.agent);
-  const checkout = await buyer.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+  const checkout = await buyer.agent.post("/api/v1/transactions/checkout").send({ listingId: listing.id });
   await sendWebhook("payment_intent.succeeded", { id: checkout.body.transaction.stripe_payment_intent_id });
   return { seller, buyer, listing, transactionId: checkout.body.transaction.id };
 }
@@ -56,7 +52,7 @@ async function paidOrder(sellerEmail, buyerEmail) {
 describe("order audit trail", () => {
   test("an order's history starts at creation, not mid-lifecycle", async () => {
     const { buyer, transactionId } = await paidOrder("histseller@example.com", "histbuyer@example.com");
-    const res = await buyer.agent.get(`/api/transactions/${transactionId}/history`);
+    const res = await buyer.agent.get(`/api/v1/transactions/${transactionId}/history`);
 
     expect(res.status).toBe(200);
     expect(res.body.events[0].event_type).toBe("order_created");
@@ -65,10 +61,10 @@ describe("order audit trail", () => {
 
   test("the full happy path is recorded in order with actors", async () => {
     const { seller, buyer, transactionId } = await paidOrder("fullhistseller@example.com", "fullhistbuyer@example.com");
-    await seller.agent.post(`/api/transactions/${transactionId}/fulfil`);
-    await buyer.agent.post(`/api/transactions/${transactionId}/confirm-receipt`);
+    await seller.agent.post(`/api/v1/transactions/${transactionId}/fulfil`);
+    await buyer.agent.post(`/api/v1/transactions/${transactionId}/confirm-receipt`);
 
-    const res = await buyer.agent.get(`/api/transactions/${transactionId}/history`);
+    const res = await buyer.agent.get(`/api/v1/transactions/${transactionId}/history`);
     const trail = res.body.events.map((e) => `${e.from_status ?? "-"}->${e.to_status}:${e.actor_type}`);
 
     expect(trail).toEqual([
@@ -82,7 +78,7 @@ describe("order audit trail", () => {
   // "Nobody did this, a timer did" is a real answer in a dispute.
   test("system-driven changes are attributed to the system, not a user", async () => {
     const { buyer, transactionId } = await paidOrder("sysseller@example.com", "sysbuyer@example.com");
-    const res = await buyer.agent.get(`/api/transactions/${transactionId}/history`);
+    const res = await buyer.agent.get(`/api/v1/transactions/${transactionId}/history`);
 
     const paidEvent = res.body.events.find((e) => e.to_status === "paid");
     expect(paidEvent.actor_type).toBe("system");
@@ -92,9 +88,9 @@ describe("order audit trail", () => {
 
   test("a dispute records the reason given", async () => {
     const { buyer, transactionId } = await paidOrder("dispHistSeller@example.com", "disphistbuyer@example.com");
-    await buyer.agent.post(`/api/transactions/${transactionId}/dispute`).send({ reason: "Item never arrived" });
+    await buyer.agent.post(`/api/v1/transactions/${transactionId}/dispute`).send({ reason: "Item never arrived" });
 
-    const res = await buyer.agent.get(`/api/transactions/${transactionId}/history`);
+    const res = await buyer.agent.get(`/api/v1/transactions/${transactionId}/history`);
     const disputeEvent = res.body.events.find((e) => e.to_status === "disputed");
     expect(disputeEvent.reason).toBe("Item never arrived");
     expect(disputeEvent.actor_type).toBe("buyer");
@@ -105,9 +101,9 @@ describe("order audit trail", () => {
     await query("UPDATE users SET is_admin = true WHERE id = $1", [admin.user.id]);
     const { buyer, listing, transactionId } = await paidOrder("modhistseller@example.com", "modhistbuyer@example.com");
 
-    await admin.agent.post(`/api/moderation/listings/${listing.id}/takedown`).send({ reason: "Recalled product" });
+    await admin.agent.post(`/api/v1/moderation/listings/${listing.id}/takedown`).send({ reason: "Recalled product" });
 
-    const res = await buyer.agent.get(`/api/transactions/${transactionId}/history`);
+    const res = await buyer.agent.get(`/api/v1/transactions/${transactionId}/history`);
     const refund = res.body.events.find((e) => e.to_status === "refunded");
     expect(refund.actor_type).toBe("admin");
     expect(refund.reason).toContain("Recalled product");
@@ -117,20 +113,20 @@ describe("order audit trail", () => {
     const { seller, buyer, transactionId } = await paidOrder("visseller@example.com", "visbuyer@example.com");
     const stranger = await createVerifiedUser(app, { email: "visstranger@example.com" });
 
-    expect((await buyer.agent.get(`/api/transactions/${transactionId}/history`)).status).toBe(200);
-    expect((await seller.agent.get(`/api/transactions/${transactionId}/history`)).status).toBe(200);
-    expect((await stranger.agent.get(`/api/transactions/${transactionId}/history`)).status).toBe(403);
+    expect((await buyer.agent.get(`/api/v1/transactions/${transactionId}/history`)).status).toBe(200);
+    expect((await seller.agent.get(`/api/v1/transactions/${transactionId}/history`)).status).toBe(200);
+    expect((await stranger.agent.get(`/api/v1/transactions/${transactionId}/history`)).status).toBe(403);
   });
 
   // The audit event and the status change are one database transaction, so
   // a status can never move without leaving a trace.
   test("every status the order reached has a matching event", async () => {
     const { seller, buyer, transactionId } = await paidOrder("matchseller@example.com", "matchbuyer@example.com");
-    await seller.agent.post(`/api/transactions/${transactionId}/fulfil`);
-    await buyer.agent.post(`/api/transactions/${transactionId}/confirm-receipt`);
+    await seller.agent.post(`/api/v1/transactions/${transactionId}/fulfil`);
+    await buyer.agent.post(`/api/v1/transactions/${transactionId}/confirm-receipt`);
 
     const { rows } = await query("SELECT status FROM transactions WHERE id = $1", [transactionId]);
-    const events = (await buyer.agent.get(`/api/transactions/${transactionId}/history`)).body.events;
+    const events = (await buyer.agent.get(`/api/v1/transactions/${transactionId}/history`)).body.events;
     expect(events[events.length - 1].to_status).toBe(rows[0].status);
   });
 
@@ -139,9 +135,9 @@ describe("order audit trail", () => {
   // with a stack trace, and production error tracking fills with non-errors.
   test("an invalid transition returns a clean 409, not a server error", async () => {
     const { seller, buyer, transactionId } = await paidOrder("cleanerrseller@example.com", "cleanerrbuyer@example.com");
-    await buyer.agent.post(`/api/transactions/${transactionId}/confirm-receipt`);
+    await buyer.agent.post(`/api/v1/transactions/${transactionId}/confirm-receipt`);
 
-    const res = await seller.agent.post(`/api/transactions/${transactionId}/fulfil`);
+    const res = await seller.agent.post(`/api/v1/transactions/${transactionId}/fulfil`);
     expect(res.status).toBe(409);
     expect(res.body.error).toMatch(/can't become/);
     expect(res.status).toBeLessThan(500);

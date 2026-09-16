@@ -21,7 +21,7 @@ jest.mock("stripe", () => jest.fn().mockImplementation(() => ({
 const app = require("../server");
 const { query } = require("../db");
 const { resetDb } = require("./dbReset");
-const { createVerifiedUser, makeSellerPayoutReady } = require("./helpers");
+const { createVerifiedUser, createListing: createListingBase } = require("./helpers");
 
 beforeAll(async () => {
   await app.dbReady;
@@ -29,11 +29,7 @@ beforeAll(async () => {
 });
 
 async function createListing(sellerAgent, overrides = {}) {
-  const res = await sellerAgent.post("/api/listings").send({
-    category: "toys", title: "Notify test toy", priceCents: 1000, condition: "Good", city: "Helsinki", area: "Kamppi", ...overrides,
-  });
-  await makeSellerPayoutReady(res.body.listing.seller_id);
-  return res.body.listing;
+  return createListingBase(sellerAgent, { category: "toys", title: "Notify test toy", priceCents: 1000, ...overrides });
 }
 
 // Notifications are created fire-and-forget so a marketplace action never
@@ -58,7 +54,7 @@ describe("notification triggers", () => {
     const buyer = await createVerifiedUser(app, { email: "notifybuyer@example.com" });
     const listing = await createListing(seller.agent, { title: "Notifiable stroller" });
 
-    await buyer.agent.post("/api/messages/thread").send({ listingId: listing.id, text: "Is this available?" });
+    await buyer.agent.post("/api/v1/messages/thread").send({ listingId: listing.id, text: "Is this available?" });
 
     const n = await waitForNotification(seller.user.id, "message_received");
     expect(n).not.toBeNull();
@@ -71,8 +67,8 @@ describe("notification triggers", () => {
     const buyer = await createVerifiedUser(app, { email: "replynotifybuyer@example.com" });
     const listing = await createListing(seller.agent);
 
-    const send = await buyer.agent.post("/api/messages/thread").send({ listingId: listing.id, text: "hello" });
-    await seller.agent.post(`/api/messages/conversations/${send.body.conversation.id}/reply`).send({ text: "yes it is" });
+    const send = await buyer.agent.post("/api/v1/messages/thread").send({ listingId: listing.id, text: "hello" });
+    await seller.agent.post(`/api/v1/messages/conversations/${send.body.conversation.id}/reply`).send({ text: "yes it is" });
 
     const n = await waitForNotification(buyer.user.id, "message_received");
     expect(n).not.toBeNull();
@@ -86,9 +82,9 @@ describe("notification triggers", () => {
     const buyer = await createVerifiedUser(app, { email: "salenotifybuyer@example.com" });
     const listing = await createListing(seller.agent);
 
-    const checkout = await buyer.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+    const checkout = await buyer.agent.post("/api/v1/transactions/checkout").send({ listingId: listing.id });
     await request(app)
-      .post("/api/transactions/webhook")
+      .post("/api/v1/transactions/webhook")
       .set("Content-Type", "application/json")
       .set("stripe-signature", "mocked")
       .send(JSON.stringify({
@@ -113,7 +109,7 @@ describe("notification triggers", () => {
     const seller = await createVerifiedUser(app, { email: "takedownnotify@example.com" });
     const listing = await createListing(seller.agent);
 
-    await admin.agent.post(`/api/moderation/listings/${listing.id}/takedown`).send({ reason: "Recalled product" });
+    await admin.agent.post(`/api/v1/moderation/listings/${listing.id}/takedown`).send({ reason: "Recalled product" });
 
     const n = await waitForNotification(seller.user.id, "listing_taken_down");
     expect(n).not.toBeNull();
@@ -123,7 +119,7 @@ describe("notification triggers", () => {
 
 describe("notification API", () => {
   test("requires authentication", async () => {
-    const res = await request(app).get("/api/notifications");
+    const res = await request(app).get("/api/v1/notifications");
     expect(res.status).toBe(401);
   });
 
@@ -131,10 +127,10 @@ describe("notification API", () => {
     const seller = await createVerifiedUser(app, { email: "listnotify@example.com" });
     const buyer = await createVerifiedUser(app, { email: "listnotifybuyer@example.com" });
     const listing = await createListing(seller.agent);
-    await buyer.agent.post("/api/messages/thread").send({ listingId: listing.id, text: "hi" });
+    await buyer.agent.post("/api/v1/messages/thread").send({ listingId: listing.id, text: "hi" });
     await waitForNotification(seller.user.id, "message_received");
 
-    const res = await seller.agent.get("/api/notifications");
+    const res = await seller.agent.get("/api/v1/notifications");
     expect(res.status).toBe(200);
     expect(res.body.unreadCount).toBeGreaterThanOrEqual(1);
     expect(res.body.notifications.length).toBeGreaterThanOrEqual(1);
@@ -144,12 +140,12 @@ describe("notification API", () => {
     const seller = await createVerifiedUser(app, { email: "markread@example.com" });
     const buyer = await createVerifiedUser(app, { email: "markreadbuyer@example.com" });
     const listing = await createListing(seller.agent);
-    await buyer.agent.post("/api/messages/thread").send({ listingId: listing.id, text: "hi" });
+    await buyer.agent.post("/api/v1/messages/thread").send({ listingId: listing.id, text: "hi" });
     const n = await waitForNotification(seller.user.id, "message_received");
 
-    const before = (await seller.agent.get("/api/notifications")).body.unreadCount;
-    await seller.agent.post(`/api/notifications/${n.id}/read`);
-    const after = (await seller.agent.get("/api/notifications")).body.unreadCount;
+    const before = (await seller.agent.get("/api/v1/notifications")).body.unreadCount;
+    await seller.agent.post(`/api/v1/notifications/${n.id}/read`);
+    const after = (await seller.agent.get("/api/v1/notifications")).body.unreadCount;
 
     expect(after).toBe(before - 1);
   });
@@ -161,10 +157,10 @@ describe("notification API", () => {
     const buyer = await createVerifiedUser(app, { email: "scopebuyer@example.com" });
     const stranger = await createVerifiedUser(app, { email: "scopestranger@example.com" });
     const listing = await createListing(seller.agent);
-    await buyer.agent.post("/api/messages/thread").send({ listingId: listing.id, text: "hi" });
+    await buyer.agent.post("/api/v1/messages/thread").send({ listingId: listing.id, text: "hi" });
     const n = await waitForNotification(seller.user.id, "message_received");
 
-    const res = await stranger.agent.post(`/api/notifications/${n.id}/read`);
+    const res = await stranger.agent.post(`/api/v1/notifications/${n.id}/read`);
     expect(res.status).toBe(404);
 
     const { rows } = await query("SELECT read_at FROM notifications WHERE id = $1", [n.id]);
@@ -175,11 +171,11 @@ describe("notification API", () => {
     const seller = await createVerifiedUser(app, { email: "readall@example.com" });
     const buyer = await createVerifiedUser(app, { email: "readallbuyer@example.com" });
     const listing = await createListing(seller.agent);
-    await buyer.agent.post("/api/messages/thread").send({ listingId: listing.id, text: "hi" });
+    await buyer.agent.post("/api/v1/messages/thread").send({ listingId: listing.id, text: "hi" });
     await waitForNotification(seller.user.id, "message_received");
 
-    await seller.agent.post("/api/notifications/read-all");
-    const res = await seller.agent.get("/api/notifications");
+    await seller.agent.post("/api/v1/notifications/read-all");
+    const res = await seller.agent.get("/api/v1/notifications");
     expect(res.body.unreadCount).toBe(0);
   });
 
@@ -188,8 +184,8 @@ describe("notification API", () => {
     const buyer = await createVerifiedUser(app, { email: "noemailbuyer@example.com" });
     const listing = await createListing(seller.agent);
 
-    await seller.agent.post("/api/notifications/email-preference").send({ enabled: false });
-    await buyer.agent.post("/api/messages/thread").send({ listingId: listing.id, text: "hi" });
+    await seller.agent.post("/api/v1/notifications/email-preference").send({ enabled: false });
+    await buyer.agent.post("/api/v1/messages/thread").send({ listingId: listing.id, text: "hi" });
 
     const n = await waitForNotification(seller.user.id, "message_received");
     expect(n).not.toBeNull(); // stored regardless

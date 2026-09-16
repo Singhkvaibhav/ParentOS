@@ -5,7 +5,13 @@
 // and backend from the same origin (or behind one reverse proxy) for the
 // same reason, or the cookie's SameSite setting needs to change (see
 // backend/auth/cookieConfig.js).
-const API_URL = import.meta.env.VITE_API_URL || "/api";
+// VITE_API_URL is the API's ROOT, not a versioned base - /health and
+// /ready live there unversioned (they're consumed by infra, not app
+// clients, and don't change shape when the API version bumps - see
+// backend/config.js's API_PREFIX). Every real endpoint lives one level
+// down, under the version the frontend was built against.
+const API_ROOT = import.meta.env.VITE_API_URL || "/api";
+const API_URL = `${API_ROOT}/v1`;
 
 const CSRF_COOKIE_NAME = "parentos_csrf";
 const CSRF_HEADER_NAME = "x-csrf-token";
@@ -28,7 +34,7 @@ function readCsrfToken() {
 async function ensureCsrfToken() {
   const existing = readCsrfToken();
   if (existing) return existing;
-  await fetch(`${API_URL}/health`, { credentials: "include" }).catch(() => {});
+  await fetch(`${API_ROOT}/health`, { credentials: "include" }).catch(() => {});
   return readCsrfToken();
 }
 

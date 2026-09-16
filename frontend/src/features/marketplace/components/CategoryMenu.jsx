@@ -15,7 +15,7 @@ import { subcategoryLabel } from "../../../constants";
 // (SearchFilters) rather than this component calling useMarketplaceConfig()
 // itself - it's rendered as SearchFilters' child and needs the exact same
 // config, so a second independent call here would just fire a second,
-// redundant GET /api/meta/config on every mount.
+// redundant GET /api/v1/meta/config on every mount.
 //
 // onSelect(categoryId, subcategoryId | null) - null means "this category,
 // no specific subcategory" (the "View all X" row, or clicking the

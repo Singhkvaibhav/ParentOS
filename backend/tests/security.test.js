@@ -16,7 +16,7 @@ beforeAll(async () => {
 // state changes. SameSite=Lax helps but shouldn't be the only layer.
 describe("CSRF protection", () => {
   test("a state-changing request with no CSRF token is rejected", async () => {
-    const res = await request(app).post("/api/auth/login").send({ email: "x@example.com", password: "y" });
+    const res = await request(app).post("/api/v1/auth/login").send({ email: "x@example.com", password: "y" });
     expect(res.status).toBe(403);
     expect(res.body.error).toMatch(/csrf/i);
   });
@@ -25,7 +25,7 @@ describe("CSRF protection", () => {
     const agent = request.agent(app);
     await agent.get("/api/health"); // picks up the real cookie
     const res = await agent
-      .post("/api/auth/login")
+      .post("/api/v1/auth/login")
       .set(CSRF_HEADER_NAME, "not-the-right-token")
       .send({ email: "x@example.com", password: "y" });
     expect(res.status).toBe(403);
@@ -34,12 +34,12 @@ describe("CSRF protection", () => {
   test("a matching cookie+header pair is accepted", async () => {
     const { email, password } = await createVerifiedUser(app, { email: "csrfok@example.com" });
     const agent = await csrfAgent(app);
-    const res = await agent.post("/api/auth/login").send({ email, password });
+    const res = await agent.post("/api/v1/auth/login").send({ email, password });
     expect(res.status).toBe(200);
   });
 
   test("safe methods (GET) don't require a CSRF token", async () => {
-    const res = await request(app).get("/api/listings");
+    const res = await request(app).get("/api/v1/listings");
     expect(res.status).toBe(200);
   });
 
@@ -54,7 +54,7 @@ describe("CSRF protection", () => {
     // No CSRF token supplied. It should get *past* CSRF and fail on
     // signature verification instead (400), not be blocked as 403.
     const res = await request(app)
-      .post("/api/transactions/webhook")
+      .post("/api/v1/transactions/webhook")
       .set("Content-Type", "application/json")
       .send(JSON.stringify({ type: "payment_intent.succeeded", data: { object: { id: "pi_x" } } }));
     expect(res.status).not.toBe(403);
@@ -67,13 +67,13 @@ describe("session revocation", () => {
   test("bumping session_version invalidates an existing session", async () => {
     const { agent, user } = await createVerifiedUser(app, { email: "revoke@example.com" });
 
-    expect((await agent.get("/api/auth/me")).status).toBe(200);
+    expect((await agent.get("/api/v1/auth/me")).status).toBe(200);
 
     // Simulates any server-side revocation (password change, "log out
     // everywhere" from another device, admin action).
     await query("UPDATE users SET session_version = session_version + 1 WHERE id = $1", [user.id]);
 
-    const after = await agent.get("/api/auth/me");
+    const after = await agent.get("/api/v1/auth/me");
     expect(after.status).toBe(401);
   });
 
@@ -82,25 +82,25 @@ describe("session revocation", () => {
 
     // Two independent logins = two devices holding separate tokens.
     const deviceA = await csrfAgent(app);
-    await deviceA.post("/api/auth/login").send({ email, password });
+    await deviceA.post("/api/v1/auth/login").send({ email, password });
     const deviceB = await csrfAgent(app);
-    await deviceB.post("/api/auth/login").send({ email, password });
+    await deviceB.post("/api/v1/auth/login").send({ email, password });
 
-    expect((await deviceA.get("/api/auth/me")).status).toBe(200);
-    expect((await deviceB.get("/api/auth/me")).status).toBe(200);
+    expect((await deviceA.get("/api/v1/auth/me")).status).toBe(200);
+    expect((await deviceB.get("/api/v1/auth/me")).status).toBe(200);
 
-    const res = await deviceA.post("/api/auth/logout-everywhere");
+    const res = await deviceA.post("/api/v1/auth/logout-everywhere");
     expect(res.status).toBe(200);
 
     // Device A got a fresh token in the response and stays signed in;
     // device B's older token is now invalid.
-    expect((await deviceA.get("/api/auth/me")).status).toBe(200);
-    expect((await deviceB.get("/api/auth/me")).status).toBe(401);
+    expect((await deviceA.get("/api/v1/auth/me")).status).toBe(200);
+    expect((await deviceB.get("/api/v1/auth/me")).status).toBe(401);
   });
 
   test("logout-everywhere requires authentication", async () => {
     const agent = await csrfAgent(app);
-    const res = await agent.post("/api/auth/logout-everywhere");
+    const res = await agent.post("/api/v1/auth/logout-everywhere");
     expect(res.status).toBe(401);
   });
 });

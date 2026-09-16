@@ -12,7 +12,7 @@ jest.mock("../ai/controller", () => ({
 const app = require("../server");
 const { query } = require("../db");
 const { resetDb } = require("./dbReset");
-const { createVerifiedUser, csrfAgent } = require("./helpers");
+const { createVerifiedUser, csrfAgent, createListing: createListingBase } = require("./helpers");
 
 beforeAll(async () => {
   await app.dbReady;
@@ -20,16 +20,7 @@ beforeAll(async () => {
 });
 
 async function createListing(sellerAgent, overrides = {}) {
-  const res = await sellerAgent.post("/api/listings").send({
-    category: "toys",
-    title: "Test toy",
-    priceCents: 1000,
-    condition: "Good",
-    city: "Helsinki",
-    area: "Kamppi",
-    ...overrides,
-  });
-  return res.body.listing;
+  return createListingBase(sellerAgent, { category: "toys", title: "Test toy", priceCents: 1000, payoutReady: false, ...overrides });
 }
 
 // Polls a condition until it's true or the timeout elapses - used to wait
@@ -46,8 +37,8 @@ async function waitFor(conditionFn, { timeout = 2000, interval = 50 } = {}) {
 
 describe("message authorization", () => {
   test("unauthenticated requests to /messages/thread are rejected", async () => {
-    const getRes = await request(app).get("/api/messages/thread?listingId=1");
-    const postRes = await (await csrfAgent(app)).post("/api/messages/thread").send({ listingId: 1, text: "hi" });
+    const getRes = await request(app).get("/api/v1/messages/thread?listingId=1");
+    const postRes = await (await csrfAgent(app)).post("/api/v1/messages/thread").send({ listingId: 1, text: "hi" });
     expect(getRes.status).toBe(401);
     expect(postRes.status).toBe(401);
   });
@@ -57,11 +48,11 @@ describe("message authorization", () => {
     const buyer = await createVerifiedUser(app, { email: "msgbuyer@example.com" });
     const listing = await createListing(seller.agent);
 
-    const sendRes = await buyer.agent.post("/api/messages/thread").send({ listingId: listing.id, text: "Is this available?" });
+    const sendRes = await buyer.agent.post("/api/v1/messages/thread").send({ listingId: listing.id, text: "Is this available?" });
     expect(sendRes.status).toBe(201);
     expect(sendRes.body.conversation.messages).toHaveLength(1);
 
-    const inboxRes = await seller.agent.get("/api/messages/conversations");
+    const inboxRes = await seller.agent.get("/api/v1/messages/conversations");
     expect(inboxRes.status).toBe(200);
     const convo = inboxRes.body.conversations.find((c) => c.listingId === listing.id);
     expect(convo).toBeDefined();
@@ -74,15 +65,15 @@ describe("message authorization", () => {
     const stranger = await createVerifiedUser(app, { email: "msgstranger@example.com" });
     const listing = await createListing(seller.agent);
 
-    const sendRes = await buyer.agent.post("/api/messages/thread").send({ listingId: listing.id, text: "Hello" });
+    const sendRes = await buyer.agent.post("/api/v1/messages/thread").send({ listingId: listing.id, text: "Hello" });
     const conversationId = sendRes.body.conversation.id;
 
     const strangerReply = await stranger.agent
-      .post(`/api/messages/conversations/${conversationId}/reply`)
+      .post(`/api/v1/messages/conversations/${conversationId}/reply`)
       .send({ text: "I shouldn't be able to do this" });
     expect(strangerReply.status).toBe(403);
 
-    const strangerInbox = await stranger.agent.get("/api/messages/conversations");
+    const strangerInbox = await stranger.agent.get("/api/v1/messages/conversations");
     const leaked = strangerInbox.body.conversations.find((c) => c.id === conversationId);
     expect(leaked).toBeUndefined();
   });
@@ -91,7 +82,7 @@ describe("message authorization", () => {
     const seller = await createVerifiedUser(app, { email: "ownlisting@example.com" });
     const listing = await createListing(seller.agent);
 
-    const res = await seller.agent.post("/api/messages/thread").send({ listingId: listing.id, text: "hi myself" });
+    const res = await seller.agent.post("/api/v1/messages/thread").send({ listingId: listing.id, text: "hi myself" });
     expect(res.status).toBe(400);
   });
 
@@ -100,14 +91,14 @@ describe("message authorization", () => {
     const buyer = await createVerifiedUser(app, { email: "replybuyer@example.com" });
     const listing = await createListing(seller.agent);
 
-    const sendRes = await buyer.agent.post("/api/messages/thread").send({ listingId: listing.id, text: "Question?" });
+    const sendRes = await buyer.agent.post("/api/v1/messages/thread").send({ listingId: listing.id, text: "Question?" });
     const conversationId = sendRes.body.conversation.id;
 
-    const replyRes = await seller.agent.post(`/api/messages/conversations/${conversationId}/reply`).send({ text: "Real answer from the seller" });
+    const replyRes = await seller.agent.post(`/api/v1/messages/conversations/${conversationId}/reply`).send({ text: "Real answer from the seller" });
     expect(replyRes.status).toBe(201);
     expect(replyRes.body.conversation.sellerReplied).toBe(true);
 
-    const buyerThread = await buyer.agent.get(`/api/messages/thread?listingId=${listing.id}`);
+    const buyerThread = await buyer.agent.get(`/api/v1/messages/thread?listingId=${listing.id}`);
     const texts = buyerThread.body.conversation.messages.map((m) => m.text);
     expect(texts).toContain("Real answer from the seller");
   });
@@ -120,7 +111,7 @@ describe("message authorization", () => {
     const buyer = await createVerifiedUser(app, { email: "concurrentbuyer@example.com" });
     const listing = await createListing(seller.agent);
 
-    await buyer.agent.post("/api/messages/thread").send({ listingId: listing.id, text: "Starting message" });
+    await buyer.agent.post("/api/v1/messages/thread").send({ listingId: listing.id, text: "Starting message" });
     const { rows } = await query("SELECT id FROM conversations WHERE listing_id = $1 AND buyer_id = $2", [listing.id, buyer.user.id]);
     const conversationId = rows[0].id;
 
@@ -132,13 +123,13 @@ describe("message authorization", () => {
       const { rows } = await query("SELECT COUNT(*) AS n FROM messages WHERE conversation_id = $1 AND sender_type = 'ai'", [conversationId]);
       return Number(rows[0].n) >= 1;
     });
-    await seller.agent.post(`/api/messages/conversations/${conversationId}/reply`).send({ text: "seller ack" });
+    await seller.agent.post(`/api/v1/messages/conversations/${conversationId}/reply`).send({ text: "seller ack" });
 
     const beforeCount = (await query("SELECT COUNT(*) AS n FROM messages WHERE conversation_id = $1", [conversationId])).rows[0].n;
 
     const [r1, r2] = await Promise.all([
-      buyer.agent.post(`/api/messages/conversations/${conversationId}/reply`).send({ text: "buyer message A" }),
-      buyer.agent.post(`/api/messages/conversations/${conversationId}/reply`).send({ text: "buyer message B" }),
+      buyer.agent.post(`/api/v1/messages/conversations/${conversationId}/reply`).send({ text: "buyer message A" }),
+      buyer.agent.post(`/api/v1/messages/conversations/${conversationId}/reply`).send({ text: "buyer message B" }),
     ]);
     expect(r1.status).toBe(201);
     expect(r2.status).toBe(201);
@@ -161,9 +152,9 @@ describe("message authorization", () => {
 
     // First message creates the conversation; fire a second one right
     // behind it before the first's AI reply has necessarily resolved.
-    const first = await buyer.agent.post("/api/messages/thread").send({ listingId: listing.id, text: "message one" });
+    const first = await buyer.agent.post("/api/v1/messages/thread").send({ listingId: listing.id, text: "message one" });
     const conversationId = first.body.conversation.id;
-    await buyer.agent.post(`/api/messages/conversations/${conversationId}/reply`).send({ text: "message two, sent immediately after" });
+    await buyer.agent.post(`/api/v1/messages/conversations/${conversationId}/reply`).send({ text: "message two, sent immediately after" });
 
     const gotAiReply = await waitFor(async () => {
       const { rows } = await query("SELECT COUNT(*) AS n FROM messages WHERE conversation_id = $1 AND sender_type = 'ai'", [conversationId]);

@@ -19,7 +19,7 @@ jest.mock("stripe", () => {
 
 const app = require("../server");
 const { resetDb } = require("./dbReset");
-const { createVerifiedUser, makeSellerPayoutReady } = require("./helpers");
+const { createVerifiedUser, createListing: createListingBase } = require("./helpers");
 
 beforeAll(async () => {
   await app.dbReady;
@@ -27,14 +27,7 @@ beforeAll(async () => {
 });
 
 async function createListing(sellerAgent, overrides = {}) {
-  const res = await sellerAgent.post("/api/listings").send({
-    category: "toys", title: "State machine test toy", priceCents: 1000, condition: "Good", city: "Helsinki", area: "Kamppi", ...overrides,
-  });
-  // Checkout refuses to charge a buyer when the seller can't receive
-  // payouts, so any listing meant to be buyable needs its seller
-  // onboarded - same as reality.
-  await makeSellerPayoutReady(res.body.listing.seller_id);
-  return res.body.listing;
+  return createListingBase(sellerAgent, { category: "toys", title: "State machine test toy", priceCents: 1000, ...overrides });
 }
 
 describe("listing status state machine", () => {
@@ -42,15 +35,15 @@ describe("listing status state machine", () => {
     const seller = await createVerifiedUser(app, { email: "smseller1@example.com" });
     const listing = await createListing(seller.agent);
 
-    const toReserved = await seller.agent.post(`/api/listings/${listing.id}/reserve`);
+    const toReserved = await seller.agent.post(`/api/v1/listings/${listing.id}/reserve`);
     expect(toReserved.status).toBe(200);
     expect(toReserved.body.listing.status).toBe("reserved");
 
-    const toSold = await seller.agent.post(`/api/listings/${listing.id}/sold`);
+    const toSold = await seller.agent.post(`/api/v1/listings/${listing.id}/sold`);
     expect(toSold.status).toBe(200);
     expect(toSold.body.listing.status).toBe("sold");
 
-    const relisted = await seller.agent.post(`/api/listings/${listing.id}/relist`);
+    const relisted = await seller.agent.post(`/api/v1/listings/${listing.id}/relist`);
     expect(relisted.status).toBe(200);
     expect(relisted.body.listing.status).toBe("active");
   });
@@ -59,16 +52,16 @@ describe("listing status state machine", () => {
     const seller = await createVerifiedUser(app, { email: "smseller2@example.com" });
     const listing = await createListing(seller.agent); // starts 'active'
 
-    const res = await seller.agent.post(`/api/listings/${listing.id}/relist`);
+    const res = await seller.agent.post(`/api/v1/listings/${listing.id}/relist`);
     expect(res.status).toBe(409);
   });
 
   test("invalid transition is rejected: can't mark an active listing 'active' again via reserve twice", async () => {
     const seller = await createVerifiedUser(app, { email: "smseller3@example.com" });
     const listing = await createListing(seller.agent);
-    await seller.agent.post(`/api/listings/${listing.id}/sold`); // active -> sold
+    await seller.agent.post(`/api/v1/listings/${listing.id}/sold`); // active -> sold
 
-    const res = await seller.agent.post(`/api/listings/${listing.id}/reserve`); // sold -> reserved is not allowed
+    const res = await seller.agent.post(`/api/v1/listings/${listing.id}/reserve`); // sold -> reserved is not allowed
     expect(res.status).toBe(409);
   });
 
@@ -83,19 +76,19 @@ describe("listing status state machine", () => {
     const buyer = await createVerifiedUser(app, { email: "smpendingbuyer@example.com" });
     const listing = await createListing(seller.agent);
 
-    const checkoutRes = await buyer.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+    const checkoutRes = await buyer.agent.post("/api/v1/transactions/checkout").send({ listingId: listing.id });
     expect(checkoutRes.status).toBe(201);
 
-    const midway = await request(app).get(`/api/listings/${listing.id}`);
+    const midway = await request(app).get(`/api/v1/listings/${listing.id}`);
     expect(midway.body.listing.status).toBe("reserved");
 
-    const relistAttempt = await seller.agent.post(`/api/listings/${listing.id}/relist`);
+    const relistAttempt = await seller.agent.post(`/api/v1/listings/${listing.id}/relist`);
     expect(relistAttempt.status).toBe(409);
     expect(relistAttempt.body.error).toMatch(/payment in progress/i);
 
     // The listing must still be reserved - the blocked attempt didn't
     // partially apply anything.
-    const after = await request(app).get(`/api/listings/${listing.id}`);
+    const after = await request(app).get(`/api/v1/listings/${listing.id}`);
     expect(after.body.listing.status).toBe("reserved");
   });
 
@@ -104,9 +97,9 @@ describe("listing status state machine", () => {
     const buyer = await createVerifiedUser(app, { email: "smpendingbuyer2@example.com" });
     const listing = await createListing(seller.agent);
 
-    await buyer.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+    await buyer.agent.post("/api/v1/transactions/checkout").send({ listingId: listing.id });
 
-    const res = await seller.agent.post(`/api/listings/${listing.id}/sold`);
+    const res = await seller.agent.post(`/api/v1/listings/${listing.id}/sold`);
     expect(res.status).toBe(409);
     expect(res.body.error).toMatch(/payment in progress/i);
   });
@@ -116,7 +109,7 @@ describe("listing status state machine", () => {
     const stranger = await createVerifiedUser(app, { email: "smstranger@example.com" });
     const listing = await createListing(seller.agent);
 
-    const res = await stranger.agent.post(`/api/listings/${listing.id}/reserve`);
+    const res = await stranger.agent.post(`/api/v1/listings/${listing.id}/reserve`);
     expect(res.status).toBe(403);
   });
 });
@@ -136,26 +129,26 @@ describe("pagination metadata", () => {
   });
 
   test("returns total and hasMore, consistently across pages", async () => {
-    const page1 = await request(app).get("/api/listings?category=accessories&limit=2&offset=0");
+    const page1 = await request(app).get("/api/v1/listings?category=accessories&limit=2&offset=0");
     expect(page1.body.listings).toHaveLength(2);
     expect(page1.body.total).toBeGreaterThanOrEqual(5);
     expect(page1.body.hasMore).toBe(true);
     expect(page1.body.limit).toBe(2);
     expect(page1.body.offset).toBe(0);
 
-    const lastPage = await request(app).get(`/api/listings?category=accessories&limit=2&offset=${page1.body.total - 1}`);
+    const lastPage = await request(app).get(`/api/v1/listings?category=accessories&limit=2&offset=${page1.body.total - 1}`);
     expect(lastPage.body.hasMore).toBe(false);
   });
 
   test("an offset past the end returns an empty page, not an error", async () => {
-    const res = await request(app).get("/api/listings?category=accessories&limit=2&offset=9999");
+    const res = await request(app).get("/api/v1/listings?category=accessories&limit=2&offset=9999");
     expect(res.status).toBe(200);
     expect(res.body.listings).toHaveLength(0);
     expect(res.body.hasMore).toBe(false);
   });
 
   test("the distance-filtered path returns the same envelope shape", async () => {
-    const res = await request(app).get("/api/listings?lat=60.1699&lng=24.9384&maxDistance=10&limit=2");
+    const res = await request(app).get("/api/v1/listings?lat=60.1699&lng=24.9384&maxDistance=10&limit=2");
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty("total");
     expect(res.body).toHaveProperty("hasMore");
@@ -179,36 +172,36 @@ describe("full-text search", () => {
   });
 
   test("finds a listing by a word in its title", async () => {
-    const res = await request(app).get("/api/listings?q=overalls");
+    const res = await request(app).get("/api/v1/listings?q=overalls");
     expect(res.body.listings.some((l) => l.title === "Reima winter overalls")).toBe(true);
   });
 
   test("finds a listing by a word in its description", async () => {
-    const res = await request(app).get("/api/listings?q=waterproof");
+    const res = await request(app).get("/api/v1/listings?q=waterproof");
     expect(res.body.total).toBeGreaterThanOrEqual(1);
   });
 
   test("prefix-matches, so a partly-typed word still finds results", async () => {
-    const res = await request(app).get("/api/listings?q=overal");
+    const res = await request(app).get("/api/v1/listings?q=overal");
     expect(res.body.listings.some((l) => l.title === "Reima winter overalls")).toBe(true);
   });
 
   test("ranks title matches above description-only matches", async () => {
     // "winter" is in one listing's TITLE and another's DESCRIPTION - the
     // title match should come first (setweight A vs B in migration 004).
-    const res = await request(app).get("/api/listings?q=winter");
+    const res = await request(app).get("/api/v1/listings?q=winter");
     expect(res.body.total).toBeGreaterThanOrEqual(2);
     expect(res.body.listings[0].title).toBe("Reima winter overalls");
   });
 
   test("multiple terms narrow rather than widen the results", async () => {
-    const oneTerm = await request(app).get("/api/listings?q=winter");
-    const twoTerms = await request(app).get("/api/listings?q=winter%20overalls");
+    const oneTerm = await request(app).get("/api/v1/listings?q=winter");
+    const twoTerms = await request(app).get("/api/v1/listings?q=winter%20overalls");
     expect(twoTerms.body.total).toBeLessThanOrEqual(oneTerm.body.total);
   });
 
   test("a term matching nothing returns an empty result, not an error", async () => {
-    const res = await request(app).get("/api/listings?q=zzzznotathinganywhere");
+    const res = await request(app).get("/api/v1/listings?q=zzzznotathinganywhere");
     expect(res.status).toBe(200);
     expect(res.body.total).toBe(0);
   });
@@ -216,12 +209,12 @@ describe("full-text search", () => {
   test("tsquery operators typed by a user are treated literally, not as syntax", async () => {
     // Raw '&', '!', ':*' would be a syntax error passed straight into
     // to_tsquery - they must be stripped, not crash the endpoint.
-    const res = await request(app).get("/api/listings?q=" + encodeURIComponent("&!:* winter"));
+    const res = await request(app).get("/api/v1/listings?q=" + encodeURIComponent("&!:* winter"));
     expect(res.status).toBe(200);
   });
 
   test("search combines with a category filter", async () => {
-    const res = await request(app).get("/api/listings?q=set&category=toys");
+    const res = await request(app).get("/api/v1/listings?q=set&category=toys");
     expect(res.status).toBe(200);
     expect(res.body.listings.every((l) => l.category === "toys")).toBe(true);
   });

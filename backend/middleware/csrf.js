@@ -1,4 +1,5 @@
 const crypto = require("crypto");
+const { API_PREFIX } = require("../config");
 
 // CSRF protection via the double-submit cookie pattern.
 //
@@ -44,7 +45,7 @@ function requireCsrfToken(req, res, next) {
   // infrastructure - there's no browser, no cookie, and therefore no CSRF
   // risk to protect against. It's authenticated instead by verifying
   // Stripe's signature over the raw body (see transactionsService).
-  if (req.path === "/api/transactions/webhook") return next();
+  if (req.path === `${API_PREFIX}/transactions/webhook`) return next();
 
   // CSRF exploits *ambient* credentials - a cookie the browser attaches
   // automatically, to any site, without the page's JS doing anything. A
@@ -66,7 +67,7 @@ function requireCsrfToken(req, res, next) {
   // forgot/reset-password all take the identifying value (email or an
   // emailed token) explicitly in the body - so exempting them doesn't
   // weaken what CSRF protection here actually defends.
-  if (req.path.startsWith("/api/auth/mobile/")) return next();
+  if (req.path.startsWith(`${API_PREFIX}/auth/mobile/`)) return next();
 
   const cookieToken = req.cookies?.[CSRF_COOKIE_NAME];
   const headerToken = req.get(CSRF_HEADER_NAME);

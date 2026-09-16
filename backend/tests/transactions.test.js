@@ -29,7 +29,7 @@ jest.mock("stripe", () => {
 const app = require("../server");
 const { query } = require("../db");
 const { resetDb } = require("./dbReset");
-const { createVerifiedUser, makeSellerPayoutReady } = require("./helpers");
+const { createVerifiedUser, createListing: createListingBase } = require("./helpers");
 const transactionsService = require("../services/transactionsService");
 
 beforeAll(async () => {
@@ -43,19 +43,12 @@ beforeEach(() => {
 });
 
 async function createListing(sellerAgent, overrides = {}) {
-  const res = await sellerAgent.post("/api/listings").send({
-    category: "toys", title: "Test toy", priceCents: 2000, condition: "Good", city: "Helsinki", area: "Kamppi", ...overrides,
-  });
-  // Checkout refuses to charge a buyer when the seller can't receive
-  // payouts, so any listing meant to be buyable needs its seller
-  // onboarded - same as reality.
-  await makeSellerPayoutReady(res.body.listing.seller_id);
-  return res.body.listing;
+  return createListingBase(sellerAgent, { category: "toys", title: "Test toy", priceCents: 2000, ...overrides });
 }
 
 function sendWebhook(eventType, dataObject) {
   return request(app)
-    .post("/api/transactions/webhook")
+    .post("/api/v1/transactions/webhook")
     .set("Content-Type", "application/json")
     .set("stripe-signature", "irrelevant-because-constructEvent-is-mocked")
     .send(JSON.stringify({ type: eventType, data: { object: dataObject } }));
@@ -72,18 +65,18 @@ describe("checkout + webhook", () => {
 
     // Deliberately NOT calling makeSellerPayoutReady - create the listing
     // directly so the seller stays un-onboarded.
-    const listingRes = await seller.agent.post("/api/listings").send({
+    const listingRes = await seller.agent.post("/api/v1/listings").send({
       category: "toys", title: "Unbuyable toy", priceCents: 1000, condition: "Good", city: "Helsinki", area: "Kamppi",
     });
 
-    const res = await buyer.agent.post("/api/transactions/checkout").send({ listingId: listingRes.body.listing.id });
+    const res = await buyer.agent.post("/api/v1/transactions/checkout").send({ listingId: listingRes.body.listing.id });
     expect(res.status).toBe(409);
     expect(res.body.error).toMatch(/payouts/i);
 
     // Crucially: no PaymentIntent was created, and the listing wasn't
     // left stuck in 'reserved' by a half-completed checkout.
     expect(mockPaymentIntentsCreate).not.toHaveBeenCalled();
-    const check = await request(app).get(`/api/listings/${listingRes.body.listing.id}`);
+    const check = await request(app).get(`/api/v1/listings/${listingRes.body.listing.id}`);
     expect(check.body.listing.status).toBe("active");
   });
 
@@ -105,7 +98,7 @@ describe("checkout + webhook", () => {
     );
 
     const res = await buyer.agent
-      .post("/api/transactions/checkout")
+      .post("/api/v1/transactions/checkout")
       .send({ listingId: listing.id });
 
     expect(res.status).toBe(409);
@@ -115,7 +108,7 @@ describe("checkout + webhook", () => {
     // the listing is reserved.
     expect(mockPaymentIntentsCreate).not.toHaveBeenCalled();
 
-    const check = await request(app).get(`/api/listings/${listing.id}`);
+    const check = await request(app).get(`/api/v1/listings/${listing.id}`);
     expect(check.body.listing.status).toBe("active");
   });
 
@@ -128,7 +121,7 @@ describe("checkout + webhook", () => {
     // 160.00000000001, not a string with a stray decimal.
     const listing = await createListing(seller.agent, { priceCents: 1999 });
 
-    const checkoutRes = await buyer.agent.post("/api/transactions/checkout").send({ listingId: listing.id, deliveryMethod: "delivery" });
+    const checkoutRes = await buyer.agent.post("/api/v1/transactions/checkout").send({ listingId: listing.id, deliveryMethod: "delivery" });
     const t = checkoutRes.body.transaction;
 
     expect(t.item_amount_cents).toBe(1999);
@@ -145,18 +138,18 @@ describe("checkout + webhook", () => {
     const buyer = await createVerifiedUser(app, { email: "txbuyer@example.com" });
     const listing = await createListing(seller.agent);
 
-    const checkoutRes = await buyer.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+    const checkoutRes = await buyer.agent.post("/api/v1/transactions/checkout").send({ listingId: listing.id });
     expect(checkoutRes.status).toBe(201);
     expect(checkoutRes.body.clientSecret).toBeTruthy();
 
-    const midway = await request(app).get(`/api/listings/${listing.id}`);
+    const midway = await request(app).get(`/api/v1/listings/${listing.id}`);
     expect(midway.body.listing.status).toBe("reserved");
 
     const paymentIntentId = checkoutRes.body.transaction.stripe_payment_intent_id;
     const webhookRes = await sendWebhook("payment_intent.succeeded", { id: paymentIntentId });
     expect(webhookRes.status).toBe(200);
 
-    const after = await request(app).get(`/api/listings/${listing.id}`);
+    const after = await request(app).get(`/api/v1/listings/${listing.id}`);
     expect(after.body.listing.status).toBe("sold");
 
     const { rows } = await query("SELECT status FROM transactions WHERE stripe_payment_intent_id = $1", [paymentIntentId]);
@@ -168,7 +161,7 @@ describe("checkout + webhook", () => {
     const buyer = await createVerifiedUser(app, { email: "idembuyer@example.com" });
     const listing = await createListing(seller.agent);
 
-    const checkoutRes = await buyer.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+    const checkoutRes = await buyer.agent.post("/api/v1/transactions/checkout").send({ listingId: listing.id });
     const paymentIntentId = checkoutRes.body.transaction.stripe_payment_intent_id;
 
     const first = await sendWebhook("payment_intent.succeeded", { id: paymentIntentId });
@@ -179,7 +172,7 @@ describe("checkout + webhook", () => {
     const { rows } = await query("SELECT status FROM transactions WHERE stripe_payment_intent_id = $1", [paymentIntentId]);
     expect(rows[0].status).toBe("paid"); // not double-processed into some other state
 
-    const listingRes = await request(app).get(`/api/listings/${listing.id}`);
+    const listingRes = await request(app).get(`/api/v1/listings/${listing.id}`);
     expect(listingRes.body.listing.status).toBe("sold");
   });
 
@@ -188,12 +181,12 @@ describe("checkout + webhook", () => {
     const buyer = await createVerifiedUser(app, { email: "failbuyer@example.com" });
     const listing = await createListing(seller.agent);
 
-    const checkoutRes = await buyer.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+    const checkoutRes = await buyer.agent.post("/api/v1/transactions/checkout").send({ listingId: listing.id });
     const paymentIntentId = checkoutRes.body.transaction.stripe_payment_intent_id;
 
     await sendWebhook("payment_intent.payment_failed", { id: paymentIntentId });
 
-    const listingRes = await request(app).get(`/api/listings/${listing.id}`);
+    const listingRes = await request(app).get(`/api/v1/listings/${listing.id}`);
     expect(listingRes.body.listing.status).toBe("active");
 
     const { rows } = await query("SELECT status FROM transactions WHERE stripe_payment_intent_id = $1", [paymentIntentId]);
@@ -211,7 +204,7 @@ describe("checkout + webhook", () => {
     const buyer = await createVerifiedUser(app, { email: "latebuyer@example.com" });
     const listing = await createListing(seller.agent);
 
-    const checkoutRes = await buyer.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+    const checkoutRes = await buyer.agent.post("/api/v1/transactions/checkout").send({ listingId: listing.id });
     const paymentIntentId = checkoutRes.body.transaction.stripe_payment_intent_id;
     const transactionId = checkoutRes.body.transaction.id;
 
@@ -231,7 +224,7 @@ describe("checkout + webhook", () => {
     expect(rows[0].status).toBe("refunded");
 
     // The listing must NOT have been flipped back to sold by the late event.
-    const listingRes = await request(app).get(`/api/listings/${listing.id}`);
+    const listingRes = await request(app).get(`/api/v1/listings/${listing.id}`);
     expect(listingRes.body.listing.status).toBe("active");
   });
 });
@@ -242,7 +235,7 @@ describe("reservation expiry", () => {
     const buyer = await createVerifiedUser(app, { email: "expirebuyer@example.com" });
     const listing = await createListing(seller.agent);
 
-    const checkoutRes = await buyer.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+    const checkoutRes = await buyer.agent.post("/api/v1/transactions/checkout").send({ listingId: listing.id });
     const transactionId = checkoutRes.body.transaction.id;
 
     // Backdate the reservation well past the TTL, as if the buyer
@@ -252,7 +245,7 @@ describe("reservation expiry", () => {
     const released = await transactionsService.releaseExpiredReservations();
     expect(released).toBeGreaterThanOrEqual(1);
 
-    const listingRes = await request(app).get(`/api/listings/${listing.id}`);
+    const listingRes = await request(app).get(`/api/v1/listings/${listing.id}`);
     expect(listingRes.body.listing.status).toBe("active");
 
     const { rows } = await query("SELECT status FROM transactions WHERE id = $1", [transactionId]);
@@ -264,12 +257,12 @@ describe("reservation expiry", () => {
     const buyer = await createVerifiedUser(app, { email: "freshbuyer@example.com" });
     const listing = await createListing(seller.agent);
 
-    await buyer.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+    await buyer.agent.post("/api/v1/transactions/checkout").send({ listingId: listing.id });
     // reserved_at defaults to "now" - well within the TTL, nothing to sweep.
 
     await transactionsService.releaseExpiredReservations();
 
-    const listingRes = await request(app).get(`/api/listings/${listing.id}`);
+    const listingRes = await request(app).get(`/api/v1/listings/${listing.id}`);
     expect(listingRes.body.listing.status).toBe("reserved");
   });
 });
@@ -282,7 +275,7 @@ describe("order completion (confirm receipt)", () => {
     const seller = await createVerifiedUser(app, { email: sellerEmail });
     const buyer = await createVerifiedUser(app, { email: buyerEmail });
     const listing = await createListing(seller.agent);
-    const checkout = await buyer.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+    const checkout = await buyer.agent.post("/api/v1/transactions/checkout").send({ listingId: listing.id });
     await sendWebhook("payment_intent.succeeded", { id: checkout.body.transaction.stripe_payment_intent_id });
     return { seller, buyer, listing, transactionId: checkout.body.transaction.id };
   }
@@ -290,7 +283,7 @@ describe("order completion (confirm receipt)", () => {
   test("a buyer can confirm receipt, moving the order from paid to completed", async () => {
     const { buyer, transactionId } = await paidOrder("confirmseller@example.com", "confirmbuyer@example.com");
 
-    const res = await buyer.agent.post(`/api/transactions/${transactionId}/confirm-receipt`);
+    const res = await buyer.agent.post(`/api/v1/transactions/${transactionId}/confirm-receipt`);
     expect(res.status).toBe(200);
     expect(res.body.transaction.status).toBe("completed");
   });
@@ -301,7 +294,7 @@ describe("order completion (confirm receipt)", () => {
   test("a seller cannot confirm receipt of their own sale", async () => {
     const { seller, transactionId } = await paidOrder("noconfirmseller@example.com", "noconfirmbuyer@example.com");
 
-    const res = await seller.agent.post(`/api/transactions/${transactionId}/confirm-receipt`);
+    const res = await seller.agent.post(`/api/v1/transactions/${transactionId}/confirm-receipt`);
     expect(res.status).toBe(403);
   });
 
@@ -309,7 +302,7 @@ describe("order completion (confirm receipt)", () => {
     const { transactionId } = await paidOrder("thirdseller@example.com", "thirdbuyer@example.com");
     const stranger = await createVerifiedUser(app, { email: "thirdstranger@example.com" });
 
-    const res = await stranger.agent.post(`/api/transactions/${transactionId}/confirm-receipt`);
+    const res = await stranger.agent.post(`/api/v1/transactions/${transactionId}/confirm-receipt`);
     expect(res.status).toBe(403);
   });
 
@@ -322,8 +315,8 @@ describe("order completion (confirm receipt)", () => {
   test("confirming twice is a no-op, not a second completion", async () => {
     const { buyer, transactionId } = await paidOrder("twiceseller@example.com", "twicebuyer@example.com");
 
-    const first = await buyer.agent.post(`/api/transactions/${transactionId}/confirm-receipt`);
-    const second = await buyer.agent.post(`/api/transactions/${transactionId}/confirm-receipt`);
+    const first = await buyer.agent.post(`/api/v1/transactions/${transactionId}/confirm-receipt`);
+    const second = await buyer.agent.post(`/api/v1/transactions/${transactionId}/confirm-receipt`);
 
     expect(first.body.transaction.status).toBe("completed");
     expect(second.body.transaction.status).toBe("completed");
@@ -341,19 +334,19 @@ describe("order completion (confirm receipt)", () => {
     const buyer = await createVerifiedUser(app, { email: "unpaidbuyer@example.com" });
     const listing = await createListing(seller.agent);
     // Checkout only - no payment webhook, so this stays 'pending'.
-    const checkout = await buyer.agent.post("/api/transactions/checkout").send({ listingId: listing.id });
+    const checkout = await buyer.agent.post("/api/v1/transactions/checkout").send({ listingId: listing.id });
 
-    const res = await buyer.agent.post(`/api/transactions/${checkout.body.transaction.id}/confirm-receipt`);
+    const res = await buyer.agent.post(`/api/v1/transactions/${checkout.body.transaction.id}/confirm-receipt`);
     expect(res.status).toBe(409);
   });
 
   test("confirming receipt still leaves the order review-eligible", async () => {
     const { seller, buyer, listing, transactionId } = await paidOrder("revflowseller@example.com", "revflowbuyer@example.com");
-    await buyer.agent.post(`/api/transactions/${transactionId}/confirm-receipt`);
+    await buyer.agent.post(`/api/v1/transactions/${transactionId}/confirm-receipt`);
 
     // 'completed' is one of the review-eligible statuses - the whole point
     // of the step existing.
-    const review = await buyer.agent.post("/api/reviews").send({
+    const review = await buyer.agent.post("/api/v1/reviews").send({
       revieweeId: seller.user.id, listingId: listing.id, rating: 5, comment: "Smooth handover",
     });
     expect(review.status).toBe(201);

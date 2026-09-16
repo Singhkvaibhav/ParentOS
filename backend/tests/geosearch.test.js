@@ -27,15 +27,15 @@ beforeAll(async () => {
   // Real Helsinki-area neighbourhoods at known separations, so the
   // assertions below are about genuine geography rather than made-up
   // coordinates that happen to sort correctly.
-  await agent.post("/api/listings").send({
+  await agent.post("/api/v1/listings").send({
     category: "toys", title: "Geo Kamppi item", priceCents: 500,
     condition: "Good", city: "Helsinki", area: "Kamppi",
   });
-  await agent.post("/api/listings").send({
+  await agent.post("/api/v1/listings").send({
     category: "toys", title: "Geo Malmi item", priceCents: 500,
     condition: "Good", city: "Helsinki", area: "Malmi",
   });
-  await agent.post("/api/listings").send({
+  await agent.post("/api/v1/listings").send({
     category: "toys", title: "Geo Espoo item", priceCents: 500,
     condition: "Good", city: "Espoo", area: "Espoon keskus",
   });
@@ -58,7 +58,7 @@ describe("distance search", () => {
   });
 
   test("results are ordered nearest-first", async () => {
-    const res = await request(app).get(`/api/listings?${CENTRAL_HELSINKI}&q=Geo`);
+    const res = await request(app).get(`/api/v1/listings?${CENTRAL_HELSINKI}&q=Geo`);
     expect(res.status).toBe(200);
     const distances = res.body.listings.map((l) => l.distanceKm);
     const sorted = [...distances].sort((a, b) => a - b);
@@ -66,7 +66,7 @@ describe("distance search", () => {
   });
 
   test("every result carries a plausible distance", async () => {
-    const res = await request(app).get(`/api/listings?${CENTRAL_HELSINKI}&q=Geo`);
+    const res = await request(app).get(`/api/v1/listings?${CENTRAL_HELSINKI}&q=Geo`);
     for (const l of res.body.listings) {
       expect(typeof l.distanceKm).toBe("number");
       expect(l.distanceKm).toBeGreaterThanOrEqual(0);
@@ -75,8 +75,8 @@ describe("distance search", () => {
   });
 
   test("maxDistance excludes anything beyond the radius", async () => {
-    const near = await request(app).get(`/api/listings?${CENTRAL_HELSINKI}&maxDistance=3&q=Geo`);
-    const far = await request(app).get(`/api/listings?${CENTRAL_HELSINKI}&maxDistance=50&q=Geo`);
+    const near = await request(app).get(`/api/v1/listings?${CENTRAL_HELSINKI}&maxDistance=3&q=Geo`);
+    const far = await request(app).get(`/api/v1/listings?${CENTRAL_HELSINKI}&maxDistance=50&q=Geo`);
 
     expect(near.body.total).toBeLessThan(far.body.total);
     for (const l of near.body.listings) {
@@ -87,14 +87,14 @@ describe("distance search", () => {
   });
 
   test("a tiny radius around a remote point returns nothing, not an error", async () => {
-    const res = await request(app).get("/api/listings?lat=68.0&lng=27.0&maxDistance=1&q=Geo");
+    const res = await request(app).get("/api/v1/listings?lat=68.0&lng=27.0&maxDistance=1&q=Geo");
     expect(res.status).toBe(200);
     expect(res.body.total).toBe(0);
     expect(res.body.listings).toHaveLength(0);
   });
 
   test("distance search returns the same pagination envelope as every other list", async () => {
-    const res = await request(app).get(`/api/listings?${CENTRAL_HELSINKI}&limit=2&q=Geo`);
+    const res = await request(app).get(`/api/v1/listings?${CENTRAL_HELSINKI}&limit=2&q=Geo`);
     expect(res.body).toHaveProperty("total");
     expect(res.body).toHaveProperty("hasMore");
     expect(res.body).toHaveProperty("limit", 2);
@@ -103,8 +103,8 @@ describe("distance search", () => {
   });
 
   test("pagination through distance results doesn't repeat or skip", async () => {
-    const page1 = await request(app).get(`/api/listings?${CENTRAL_HELSINKI}&limit=2&offset=0&q=Geo`);
-    const page2 = await request(app).get(`/api/listings?${CENTRAL_HELSINKI}&limit=2&offset=2&q=Geo`);
+    const page1 = await request(app).get(`/api/v1/listings?${CENTRAL_HELSINKI}&limit=2&offset=0&q=Geo`);
+    const page2 = await request(app).get(`/api/v1/listings?${CENTRAL_HELSINKI}&limit=2&offset=2&q=Geo`);
 
     const ids1 = page1.body.listings.map((l) => l.id);
     const ids2 = page2.body.listings.map((l) => l.id);
@@ -113,7 +113,7 @@ describe("distance search", () => {
   });
 
   test("distance search combines with a category filter", async () => {
-    const res = await request(app).get(`/api/listings?${CENTRAL_HELSINKI}&category=toys&q=Geo`);
+    const res = await request(app).get(`/api/v1/listings?${CENTRAL_HELSINKI}&category=toys&q=Geo`);
     expect(res.body.listings.every((l) => l.category === "toys")).toBe(true);
   });
 
@@ -121,13 +121,13 @@ describe("distance search", () => {
     const admin = await createVerifiedUser(app, { email: "geoadmin@example.com" });
     await db.query("UPDATE users SET is_admin = true WHERE id = $1", [admin.user.id]);
 
-    const created = await agent.post("/api/listings").send({
+    const created = await agent.post("/api/v1/listings").send({
       category: "toys", title: "Geo hidden item", priceCents: 500,
       condition: "Good", city: "Helsinki", area: "Kamppi",
     });
-    await admin.agent.post(`/api/moderation/listings/${created.body.listing.id}/takedown`).send({ reason: "test" });
+    await admin.agent.post(`/api/v1/moderation/listings/${created.body.listing.id}/takedown`).send({ reason: "test" });
 
-    const res = await request(app).get(`/api/listings?${CENTRAL_HELSINKI}&q=Geo%20hidden`);
+    const res = await request(app).get(`/api/v1/listings?${CENTRAL_HELSINKI}&q=Geo%20hidden`);
     expect(res.body.listings.some((l) => l.id === created.body.listing.id)).toBe(false);
   });
 });

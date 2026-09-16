@@ -14,7 +14,7 @@
 //
 //   STRIPE_MODE=real   Requires STRIPE_SECRET_KEY (sk_test_...) and a
 //                      Stripe CLI listener forwarding webhooks:
-//                        stripe listen --forward-to localhost:4000/api/transactions/webhook
+//                        stripe listen --forward-to localhost:4000/api/v1/transactions/webhook
 //                      Exercises the genuine Stripe round trip.
 //
 //   STRIPE_MODE=local  (default) Drives the same HTTP endpoints but posts
@@ -87,7 +87,7 @@ function makeClient() {
 async function signUpVerified(client, name, email) {
   // Bootstraps the CSRF cookie.
   await client.get("/api/health");
-  const signup = await client.post("/api/auth/signup", { name, email, password: "journey-pass-123" });
+  const signup = await client.post("/api/v1/auth/signup", { name, email, password: "journey-pass-123" });
   if (signup.status === 429) {
     // The signup limiter is per-IP and in-memory, so repeated journey runs
     // against one server process will trip it. That's the limiter working,
@@ -118,12 +118,12 @@ async function signUpVerified(client, name, email) {
     await query("UPDATE users SET verified = true, verification_code = NULL WHERE email = $1", [email]);
     console.log("  NOTE  account verified directly (local mode; SMTP configured so no devCode)");
 
-    const login = await client.post("/api/auth/login", { email, password: "journey-pass-123" });
+    const login = await client.post("/api/v1/auth/login", { email, password: "journey-pass-123" });
     if (login.status !== 200) throw new Error(`login failed: ${login.status} ${login.raw}`);
     return login.body.user;
   }
 
-  const verify = await client.post("/api/auth/verify", { email, code });
+  const verify = await client.post("/api/v1/auth/verify", { email, code });
   if (verify.status !== 200) throw new Error(`verify failed: ${verify.status} ${verify.raw}`);
   return verify.body.user;
 }
@@ -141,7 +141,7 @@ async function signUpVerified(client, name, email) {
   check("seller and buyer created and verified", !!sellerUser.id && !!buyerUser.id);
 
   console.log("\nListing");
-  const listingRes = await seller.post("/api/listings", {
+  const listingRes = await seller.post("/api/v1/listings", {
     category: "toys", title: `Journey stroller ${stamp}`, priceCents: 2500,
     condition: "Good", city: "Helsinki", area: "Kamppi",
     description: "End-to-end journey fixture.",
@@ -170,7 +170,7 @@ async function signUpVerified(client, name, email) {
   }
 
   console.log("\nCheckout");
-  const checkout = await buyer.post("/api/transactions/checkout", { listingId: listing.id });
+  const checkout = await buyer.post("/api/v1/transactions/checkout", { listingId: listing.id });
   // A seller with no Connect account is refused on purpose - money must
   // never be collected for someone who can't be paid.
   if (checkout.status === 409 || checkout.status === 400) {
@@ -206,7 +206,7 @@ async function signUpVerified(client, name, email) {
     let settled = false;
     for (let i = 0; i < 60 && !settled; i++) {
       await new Promise((r) => setTimeout(r, 2000));
-      const mine = await buyer.get("/api/transactions/mine");
+      const mine = await buyer.get("/api/v1/transactions/mine");
       settled = mine.body?.transactions?.some((t) => t.id === transaction.id && t.status !== "pending");
     }
     check("Stripe webhook settled the order", settled, "timed out after 2 minutes");
@@ -223,7 +223,7 @@ async function signUpVerified(client, name, email) {
       .update(signedPayload, "utf8")
       .digest("hex");
 
-    const hook = await fetch(`${BASE}/api/transactions/webhook`, {
+    const hook = await fetch(`${BASE}/api/v1/transactions/webhook`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -234,34 +234,34 @@ async function signUpVerified(client, name, email) {
     check("webhook accepted", hook.status === 200, `status ${hook.status}`);
   }
 
-  const afterPay = await buyer.get("/api/transactions/mine");
+  const afterPay = await buyer.get("/api/v1/transactions/mine");
   const paid = afterPay.body?.transactions?.find((t) => t.id === transaction.id);
   check("order is 'paid' after payment", paid?.status === "paid", `got ${paid?.status}`);
 
   console.log("\nHandover");
-  const fulfil = await seller.post(`/api/transactions/${transaction.id}/fulfil`);
+  const fulfil = await seller.post(`/api/v1/transactions/${transaction.id}/fulfil`);
   check("seller marks fulfilled", fulfil.status === 200, fulfil.raw);
   check("order is 'fulfilled'", fulfil.body?.transaction?.status === "fulfilled");
 
-  const receipt = await buyer.post(`/api/transactions/${transaction.id}/confirm-receipt`);
+  const receipt = await buyer.post(`/api/v1/transactions/${transaction.id}/confirm-receipt`);
   check("buyer confirms receipt", receipt.status === 200, receipt.raw);
   check("order is 'completed'", receipt.body?.transaction?.status === "completed");
 
   console.log("\nReview");
-  const review = await buyer.post("/api/reviews", {
+  const review = await buyer.post("/api/v1/reviews", {
     revieweeId: sellerUser.id, listingId: listing.id, rating: 5, comment: "Smooth journey.",
   });
   check("review accepted once the order completed", review.status === 201, review.raw);
 
   console.log("\nTrust");
-  const profile = await buyer.get(`/api/users/${sellerUser.id}`);
+  const profile = await buyer.get(`/api/v1/users/${sellerUser.id}`);
   // Counts completions, not payments - a seller paid but not confirmed
   // must not accrue trust.
   check("seller credited with one completed sale", profile.body?.user?.trust?.completedSales === 1,
     `got ${profile.body?.user?.trust?.completedSales}`);
 
   console.log("\nAudit trail");
-  const history = await buyer.get(`/api/transactions/${transaction.id}/history`);
+  const history = await buyer.get(`/api/v1/transactions/${transaction.id}/history`);
   const statuses = (history.body?.events ?? []).map((e) => e.to_status);
   check("every transition recorded in order",
     ["paid", "fulfilled", "completed"].every((s) => statuses.includes(s)),

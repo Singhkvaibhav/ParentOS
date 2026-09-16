@@ -30,7 +30,7 @@ function requestLogger(req, res, next) {
       method: req.method,
       // originalUrl, not req.path: by the time this fires, req.path has
       // been rewritten to be relative to whatever router handled it, so a
-      // request to /api/auth/signup would log as just "/signup" - which
+      // request to /api/v1/auth/signup would log as just "/signup" - which
       // makes different endpoints indistinguishable in the logs.
       path: req.originalUrl.split("?")[0],
       status: res.statusCode,

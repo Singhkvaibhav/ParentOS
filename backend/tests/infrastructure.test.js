@@ -46,13 +46,13 @@ describe("job queue degrades gracefully", () => {
     const { createVerifiedUser, makeSellerPayoutReady } = require("./helpers");
     const seller = await createVerifiedUser(app, { email: "queuefallbackseller@example.com" });
     const buyer = await createVerifiedUser(app, { email: "queuefallbackbuyer@example.com" });
-    const listingRes = await seller.agent.post("/api/listings").send({
+    const listingRes = await seller.agent.post("/api/v1/listings").send({
       category: "toys", title: "Queue fallback toy", priceCents: 800,
       condition: "Good", city: "Helsinki", area: "Kamppi",
     });
     await makeSellerPayoutReady(listingRes.body.listing.seller_id);
 
-    const send = await buyer.agent.post("/api/messages/thread").send({
+    const send = await buyer.agent.post("/api/v1/messages/thread").send({
       listingId: listingRes.body.listing.id, text: "Still available?",
     });
     expect(send.status).toBe(201);
@@ -124,7 +124,7 @@ describe("reconciliation runs", () => {
     const { createVerifiedUser, makeSellerPayoutReady } = require("./helpers");
     const seller = await createVerifiedUser(app, { email: "reconseller@example.com" });
     const buyer = await createVerifiedUser(app, { email: "reconbuyer@example.com" });
-    const listingRes = await seller.agent.post("/api/listings").send({
+    const listingRes = await seller.agent.post("/api/v1/listings").send({
       category: "toys", title: "Recon toy", priceCents: 5000,
       condition: "Good", city: "Helsinki", area: "Kamppi",
     });
@@ -170,8 +170,8 @@ describe("reconciliation API is admin-only", () => {
   test("a non-admin can't list issues or trigger a run", async () => {
     const { createVerifiedUser } = require("./helpers");
     const user = await createVerifiedUser(app, { email: "reconnotadmin@example.com" });
-    expect((await user.agent.get("/api/reconciliation/issues")).status).toBe(403);
-    expect((await user.agent.post("/api/reconciliation/run")).status).toBe(403);
+    expect((await user.agent.get("/api/v1/reconciliation/issues")).status).toBe(403);
+    expect((await user.agent.post("/api/v1/reconciliation/run")).status).toBe(403);
   });
 
   test("an admin sees issues alongside the last run", async () => {
@@ -179,7 +179,7 @@ describe("reconciliation API is admin-only", () => {
     const admin = await createVerifiedUser(app, { email: "reconadmin@example.com" });
     await query("UPDATE users SET is_admin = true WHERE id = $1", [admin.user.id]);
 
-    const res = await admin.agent.get("/api/reconciliation/issues");
+    const res = await admin.agent.get("/api/v1/reconciliation/issues");
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty("issues");
     // Without this, an empty issue list is ambiguous: "nothing wrong" and

@@ -172,7 +172,7 @@ async function createPresignedUpload({ contentType = "image/jpeg" } = {}) {
   // so the browser code path is identical in development and production.
   // Without this, direct upload would only ever be exercised in prod -
   // which is exactly where an untested path shouldn't first run.
-  return { uploadUrl: `/api/uploads/direct/${encodeURIComponent(key)}`, key, method: "PUT" };
+  return { uploadUrl: `/api/v1/uploads/direct/${encodeURIComponent(key)}`, key, method: "PUT" };
 }
 
 async function readObject(key) {

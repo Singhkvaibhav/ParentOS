@@ -18,7 +18,7 @@ beforeAll(async () => {
 // silently loses options rather than failing loudly, so it's worth a test.
 describe("config is the single source of truth for marketplace rules", () => {
   test("publishes every field the frontend depends on", async () => {
-    const res = await request(app).get("/api/meta/config");
+    const res = await request(app).get("/api/v1/meta/config");
     expect(res.status).toBe(200);
 
     for (const field of ["categories", "conditions", "deliveryFeeCents", "maxPriceCents", "limits"]) {
@@ -34,18 +34,18 @@ describe("config is the single source of truth for marketplace rules", () => {
     // If these diverge, the UI offers options the API rejects (or hides
     // ones it would accept) - the drift this endpoint exists to prevent.
     const { CATEGORY_SET } = require("../config");
-    const res = await request(app).get("/api/meta/config");
+    const res = await request(app).get("/api/v1/meta/config");
     expect([...res.body.categories].sort()).toEqual([...CATEGORY_SET].sort());
   });
 
   test("the conditions it publishes are exactly the ones listings accept", async () => {
     const { CONDITION_SET } = require("../config");
-    const res = await request(app).get("/api/meta/config");
+    const res = await request(app).get("/api/v1/meta/config");
     expect([...res.body.conditions].sort()).toEqual([...CONDITION_SET].sort());
   });
 
   test("requires no authentication - the UI needs it before login", async () => {
-    const res = await request(app).get("/api/meta/config");
+    const res = await request(app).get("/api/v1/meta/config");
     expect(res.status).toBe(200);
   });
 });

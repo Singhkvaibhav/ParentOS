@@ -1,7 +1,7 @@
 import { Shirt, Tag, Puzzle, Package } from "lucide-react";
 
 // PRESENTATION ONLY. The authoritative list of valid categories lives in
-// backend/config.js and arrives via GET /api/meta/config - this maps an id
+// backend/config.js and arrives via GET /api/v1/meta/config - this maps an id
 // the backend already vouched for onto how it should look.
 //
 // The split matters because the backend validates submissions against its

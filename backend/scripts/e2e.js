@@ -158,21 +158,21 @@ function signedWebhook(payload) {
     const sellerEmail = `e2e-seller-${stamp}@example.com`;
     const buyerEmail = `e2e-buyer-${stamp}@example.com`;
 
-    const sellerSignup = await seller.post("/api/auth/signup", {
+    const sellerSignup = await seller.post("/api/v1/auth/signup", {
       name: "E2E Seller", email: sellerEmail, password: "e2e-password-123",
     });
     check("seller signup", sellerSignup.status === 200, sellerSignup.raw);
 
-    const sellerVerify = await seller.post("/api/auth/verify", {
+    const sellerVerify = await seller.post("/api/v1/auth/verify", {
       email: sellerEmail, code: sellerSignup.body?.devCode,
     });
     check("email verification", sellerVerify.status === 200, sellerVerify.raw);
     const sellerId = sellerVerify.body?.user?.id;
 
-    const buyerSignup = await buyer.post("/api/auth/signup", {
+    const buyerSignup = await buyer.post("/api/v1/auth/signup", {
       name: "E2E Buyer", email: buyerEmail, password: "e2e-password-123",
     });
-    await buyer.post("/api/auth/verify", { email: buyerEmail, code: buyerSignup.body?.devCode });
+    await buyer.post("/api/v1/auth/verify", { email: buyerEmail, code: buyerSignup.body?.devCode });
 
     // ---- Session model --------------------------------------------------
     section("Session");
@@ -180,14 +180,14 @@ function signedWebhook(payload) {
     check("refresh cookie issued", seller.cookies.has("parentos_refresh"));
 
     const beforeRefresh = seller.cookies.get("parentos_refresh");
-    const refreshed = await seller.post("/api/auth/refresh");
+    const refreshed = await seller.post("/api/v1/auth/refresh");
     check("refresh returns a new session", refreshed.status === 200, refreshed.raw);
     check("refresh token rotated", seller.cookies.get("parentos_refresh") !== beforeRefresh);
-    check("refreshed token still authenticates", (await seller.get("/api/auth/me")).status === 200);
+    check("refreshed token still authenticates", (await seller.get("/api/v1/auth/me")).status === 200);
 
     // ---- Listing --------------------------------------------------------
     section("Listing");
-    const listingRes = await seller.post("/api/listings", {
+    const listingRes = await seller.post("/api/v1/listings", {
       category: "toys", title: `E2E stroller ${stamp}`, priceCents: 4500,
       condition: "Good", city: "Helsinki", area: "Kamppi",
       description: "End-to-end fixture.",
@@ -195,15 +195,15 @@ function signedWebhook(payload) {
     check("listing created", listingRes.status === 201, listingRes.raw);
     const listing = listingRes.body?.listing;
 
-    const search = await buyer.get(`/api/listings?q=${encodeURIComponent("E2E stroller")}`);
+    const search = await buyer.get(`/api/v1/listings?q=${encodeURIComponent("E2E stroller")}`);
     check("listing is findable by search", search.body?.listings?.some((l) => l.id === listing.id));
 
-    const geo = await buyer.get("/api/listings?lat=60.1699&lng=24.9384&maxDistance=10");
+    const geo = await buyer.get("/api/v1/listings?lat=60.1699&lng=24.9384&maxDistance=10");
     check("distance search returns it", geo.body?.listings?.some((l) => l.id === listing.id));
 
     // ---- Image upload ---------------------------------------------------
     section("Image upload");
-    const presign = await seller.post("/api/uploads/presign", { contentType: "image/jpeg" });
+    const presign = await seller.post("/api/v1/uploads/presign", { contentType: "image/jpeg" });
     check("presign issued against quarantine", presign.body?.key?.startsWith("quarantine/"), presign.raw);
 
     // A 1x1 JPEG, built by sharp so it's a genuine image.
@@ -222,46 +222,46 @@ function signedWebhook(payload) {
     });
     check("image uploaded to quarantine", put.status === 200, `status ${put.status}`);
 
-    const finalize = await seller.post("/api/uploads/finalize", { key: presign.body.key });
+    const finalize = await seller.post("/api/v1/uploads/finalize", { key: presign.body.key });
     check("image processed out of quarantine", finalize.status === 200, finalize.raw);
     check("promoted to the public prefix", finalize.body?.key?.startsWith("listings/"));
 
     // Another user must not be able to touch that key.
-    const stolen = await buyer.post("/api/uploads/finalize", { key: presign.body.key });
+    const stolen = await buyer.post("/api/v1/uploads/finalize", { key: presign.body.key });
     check("another user cannot finalize it", stolen.status === 404, `got ${stolen.status}`);
 
     // ---- Messaging ------------------------------------------------------
     section("Messaging");
-    const thread = await buyer.post("/api/messages/thread", {
+    const thread = await buyer.post("/api/v1/messages/thread", {
       listingId: listing.id, text: "Is this still available?",
     });
     check("buyer can message the seller", thread.status === 201, thread.raw);
     const conversationId = thread.body?.conversation?.id;
 
-    const messages = await buyer.get(`/api/messages/conversations/${conversationId}/messages`);
+    const messages = await buyer.get(`/api/v1/messages/conversations/${conversationId}/messages`);
     check("messages are readable and paginated", Array.isArray(messages.body?.messages));
 
     // ---- Seller payouts -------------------------------------------------
     section("Seller payouts (Stripe Connect)");
-    const beforeConnect = await buyer.post("/api/transactions/checkout", { listingId: listing.id });
+    const beforeConnect = await buyer.post("/api/v1/transactions/checkout", { listingId: listing.id });
     check("checkout blocked before Connect onboarding", beforeConnect.status === 409, beforeConnect.raw);
 
-    const onboard = await seller.post("/api/connect/onboard");
+    const onboard = await seller.post("/api/v1/connect/onboard");
     check("Connect onboarding link created via the real SDK", onboard.status === 200, onboard.raw);
 
-    const connectStatus = await seller.get("/api/connect/status");
+    const connectStatus = await seller.get("/api/v1/connect/status");
     check("Connect status reports payouts enabled", connectStatus.body?.payoutsEnabled === true, connectStatus.raw);
 
     // ---- Checkout -------------------------------------------------------
     section("Checkout");
-    const checkout = await buyer.post("/api/transactions/checkout", { listingId: listing.id });
+    const checkout = await buyer.post("/api/v1/transactions/checkout", { listingId: listing.id });
     check("checkout creates a PaymentIntent", checkout.status === 201, checkout.raw);
     const order = checkout.body?.transaction;
     const paymentIntentId = order?.stripe_payment_intent_id;
     check("PaymentIntent id returned", !!paymentIntentId);
     check("client secret returned for the browser", !!checkout.body?.clientSecret);
 
-    const statusBefore = await buyer.get(`/api/transactions/${order.id}/status`);
+    const statusBefore = await buyer.get(`/api/v1/transactions/${order.id}/status`);
     check("order reports unsettled before the webhook", statusBefore.body?.settled === false, statusBefore.raw);
 
     // ---- Payment --------------------------------------------------------
@@ -272,7 +272,7 @@ function signedWebhook(payload) {
       id: `evt_${stamp}`, type: "payment_intent.succeeded",
       data: { object: { id: paymentIntentId } },
     });
-    const hook = await fetch(`${BASE}/api/transactions/webhook`, {
+    const hook = await fetch(`${BASE}/api/v1/transactions/webhook`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "stripe-signature": header },
       body: hookBody,
@@ -280,39 +280,39 @@ function signedWebhook(payload) {
     check("webhook accepted with a real signature", hook.status === 200, `status ${hook.status}`);
 
     // An unsigned webhook must be rejected.
-    const forged = await fetch(`${BASE}/api/transactions/webhook`, {
+    const forged = await fetch(`${BASE}/api/v1/transactions/webhook`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "stripe-signature": "t=1,v1=deadbeef" },
       body: hookBody,
     });
     check("forged webhook signature rejected", forged.status >= 400, `status ${forged.status}`);
 
-    const statusAfter = await buyer.get(`/api/transactions/${order.id}/status`);
+    const statusAfter = await buyer.get(`/api/v1/transactions/${order.id}/status`);
     check("order settles to paid", statusAfter.body?.status === "paid", statusAfter.raw);
     check("status endpoint reports settled", statusAfter.body?.settled === true);
 
     // ---- Fulfilment -----------------------------------------------------
     section("Fulfilment");
-    const fulfil = await seller.post(`/api/transactions/${order.id}/fulfil`);
+    const fulfil = await seller.post(`/api/v1/transactions/${order.id}/fulfil`);
     check("seller marks fulfilled", fulfil.body?.transaction?.status === "fulfilled", fulfil.raw);
 
-    const receipt = await buyer.post(`/api/transactions/${order.id}/confirm-receipt`);
+    const receipt = await buyer.post(`/api/v1/transactions/${order.id}/confirm-receipt`);
     check("buyer confirms receipt", receipt.body?.transaction?.status === "completed", receipt.raw);
 
     // ---- Review ---------------------------------------------------------
     section("Review and trust");
-    const review = await buyer.post("/api/reviews", {
+    const review = await buyer.post("/api/v1/reviews", {
       revieweeId: sellerId, listingId: listing.id, rating: 5, comment: "Exactly as described.",
     });
     check("review accepted once completed", review.status === 201, review.raw);
 
-    const profile = await buyer.get(`/api/users/${sellerId}`);
+    const profile = await buyer.get(`/api/v1/users/${sellerId}`);
     check("trust counts the completed sale", profile.body?.user?.trust?.completedSales === 1,
       `got ${profile.body?.user?.trust?.completedSales}`);
 
     // ---- Audit trail ----------------------------------------------------
     section("Audit trail");
-    const history = await buyer.get(`/api/transactions/${order.id}/history`);
+    const history = await buyer.get(`/api/v1/transactions/${order.id}/history`);
     const statuses = (history.body?.events ?? []).map((e) => e.to_status);
     check("every transition recorded in order",
       ["paid", "fulfilled", "completed"].every((s) => statuses.includes(s)),
@@ -320,19 +320,19 @@ function signedWebhook(payload) {
 
     // ---- Idempotency ----------------------------------------------------
     section("Retry safety");
-    const replay = await fetch(`${BASE}/api/transactions/webhook`, {
+    const replay = await fetch(`${BASE}/api/v1/transactions/webhook`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "stripe-signature": header },
       body: hookBody,
     });
     check("replayed webhook is handled without error", replay.status === 200);
 
-    const afterReplay = await buyer.get(`/api/transactions/${order.id}/status`);
+    const afterReplay = await buyer.get(`/api/v1/transactions/${order.id}/status`);
     check("replay did not change the order", afterReplay.body?.status === "completed", afterReplay.raw);
 
     // ---- Privacy --------------------------------------------------------
     section("Privacy");
-    const exported = await buyer.get("/api/privacy/export");
+    const exported = await buyer.get("/api/v1/privacy/export");
     check("data export returns the buyer's data", exported.status === 200);
     let exportJson = null;
     try { exportJson = JSON.parse(exported.raw); } catch { /* ignore */ }
@@ -340,12 +340,12 @@ function signedWebhook(payload) {
       exportJson?.messagesYouSent?.some((m) => m.text.includes("still available")));
 
     // The seller has a sold listing - the case that used to break deletion.
-    const deletion = await seller.post("/api/privacy/delete-account", { confirmEmail: sellerEmail });
+    const deletion = await seller.post("/api/v1/privacy/delete-account", { confirmEmail: sellerEmail });
     check("seller with a sold listing can delete their account", deletion.status === 200, deletion.raw);
 
     const deletedLogin = client();
     await deletedLogin.get("/api/health");
-    const relogin = await deletedLogin.post("/api/auth/login", { email: sellerEmail, password: "e2e-password-123" });
+    const relogin = await deletedLogin.post("/api/v1/auth/login", { email: sellerEmail, password: "e2e-password-123" });
     check("deleted account cannot log back in", relogin.status === 401, `got ${relogin.status}`);
 
     // ---- Summary --------------------------------------------------------

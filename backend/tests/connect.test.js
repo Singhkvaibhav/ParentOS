@@ -27,13 +27,13 @@ beforeAll(async () => {
 
 describe("connect (seller payouts)", () => {
   test("requires auth", async () => {
-    expect((await (await csrfAgent(app)).post("/api/connect/onboard")).status).toBe(401);
-    expect((await request(app).get("/api/connect/status")).status).toBe(401);
+    expect((await (await csrfAgent(app)).post("/api/v1/connect/onboard")).status).toBe(401);
+    expect((await request(app).get("/api/v1/connect/status")).status).toBe(401);
   });
 
   test("status defaults to not connected for a new user", async () => {
     const { agent } = await createVerifiedUser(app, { email: "connectnew@example.com" });
-    const res = await agent.get("/api/connect/status");
+    const res = await agent.get("/api/v1/connect/status");
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ connected: false, chargesEnabled: false, payoutsEnabled: false });
   });
@@ -41,7 +41,7 @@ describe("connect (seller payouts)", () => {
   test("onboard creates a Stripe Express account (once) and returns a hosted onboarding URL", async () => {
     const { agent, user } = await createVerifiedUser(app, { email: "connectonboard@example.com" });
 
-    const res = await agent.post("/api/connect/onboard");
+    const res = await agent.post("/api/v1/connect/onboard");
     expect(res.status).toBe(200);
     expect(res.body.onboardingUrl).toBe("https://connect.stripe.com/fake-onboarding-link");
     expect(mockAccountsCreate).toHaveBeenCalledWith(expect.objectContaining({ type: "express", email: user.email }));
@@ -52,15 +52,15 @@ describe("connect (seller payouts)", () => {
     // Onboarding again for the same user must NOT create a second Stripe
     // account - it should reuse the one already on file.
     mockAccountsCreate.mockClear();
-    await agent.post("/api/connect/onboard");
+    await agent.post("/api/v1/connect/onboard");
     expect(mockAccountsCreate).not.toHaveBeenCalled();
   });
 
   test("status reflects and caches Stripe's account state once connected", async () => {
     const { agent } = await createVerifiedUser(app, { email: "connectstatus@example.com" });
-    await agent.post("/api/connect/onboard");
+    await agent.post("/api/v1/connect/onboard");
 
-    const res = await agent.get("/api/connect/status");
+    const res = await agent.get("/api/v1/connect/status");
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ connected: true, chargesEnabled: true, payoutsEnabled: false });
   });

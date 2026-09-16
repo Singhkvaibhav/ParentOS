@@ -23,7 +23,7 @@ describe("verification attempt race", () => {
   test("concurrent wrong guesses can't exceed the attempt limit", async () => {
     const agent = await csrfAgent(app);
     const email = "raceverify@example.com";
-    await agent.post("/api/auth/signup").send({ name: "Race", email, password: "testpass123" });
+    await agent.post("/api/v1/auth/signup").send({ name: "Race", email, password: "testpass123" });
 
     // Simultaneous wrong guesses from SEPARATE connections - which is what
     // a real attacker looks like, and avoids piling 20 parallel requests
@@ -31,7 +31,7 @@ describe("verification attempt race", () => {
     // the behaviour under test).
     const agents = await Promise.all(Array.from({ length: 10 }, () => csrfAgent(app)));
     const results = await Promise.all(
-      agents.map((a) => a.post("/api/auth/verify").send({ email, code: "000000" }))
+      agents.map((a) => a.post("/api/v1/auth/verify").send({ email, code: "000000" }))
     );
 
     const locked = results.filter((r) => r.status === 429).length;
@@ -45,19 +45,19 @@ describe("verification attempt race", () => {
   test("a correct code still works within the allowance", async () => {
     const agent = await csrfAgent(app);
     const email = "raceok@example.com";
-    const signup = await agent.post("/api/auth/signup").send({ name: "Ok", email, password: "testpass123" });
+    const signup = await agent.post("/api/v1/auth/signup").send({ name: "Ok", email, password: "testpass123" });
 
-    await agent.post("/api/auth/verify").send({ email, code: "000000" }); // one wrong guess
-    const res = await agent.post("/api/auth/verify").send({ email, code: signup.body.devCode });
+    await agent.post("/api/v1/auth/verify").send({ email, code: "000000" }); // one wrong guess
+    const res = await agent.post("/api/v1/auth/verify").send({ email, code: signup.body.devCode });
     expect(res.status).toBe(200);
   });
 
   test("attemptsRemaining is reported accurately, not double-counted", async () => {
     const agent = await csrfAgent(app);
     const email = "raceremaining@example.com";
-    await agent.post("/api/auth/signup").send({ name: "Rem", email, password: "testpass123" });
+    await agent.post("/api/v1/auth/signup").send({ name: "Rem", email, password: "testpass123" });
 
-    const first = await agent.post("/api/auth/verify").send({ email, code: "000000" });
+    const first = await agent.post("/api/v1/auth/verify").send({ email, code: "000000" });
     // One attempt used out of five - the atomic claim counts it exactly
     // once, where the old code incremented in two places.
     expect(first.body.attemptsRemaining).toBe(4);
@@ -93,7 +93,7 @@ describe("HTML email escaping", () => {
   test("signup with a hostile name succeeds without injecting raw HTML", async () => {
     const agent = await csrfAgent(app);
     const hostileName = '<img src=x onerror="alert(1)">';
-    const res = await agent.post("/api/auth/signup").send({
+    const res = await agent.post("/api/v1/auth/signup").send({
       name: hostileName, email: "hostile@example.com", password: "testpass123",
     });
     expect(res.status).toBe(200);
@@ -114,25 +114,25 @@ describe("message pagination", () => {
   beforeAll(async () => {
     seller = await createVerifiedUser(app, { email: "pagemsgseller@example.com" });
     buyer = await createVerifiedUser(app, { email: "pagemsgbuyer@example.com" });
-    const listingRes = await seller.agent.post("/api/listings").send({
+    const listingRes = await seller.agent.post("/api/v1/listings").send({
       category: "toys", title: "Paged chat toy", priceCents: 900,
       condition: "Good", city: "Helsinki", area: "Kamppi",
     });
     await makeSellerPayoutReady(listingRes.body.listing.seller_id);
-    const send = await buyer.agent.post("/api/messages/thread").send({
+    const send = await buyer.agent.post("/api/v1/messages/thread").send({
       listingId: listingRes.body.listing.id, text: "message 0",
     });
     conversationId = send.body.conversation.id;
 
     // Seller replies first so the AI doesn't inject extra messages.
-    await seller.agent.post(`/api/messages/conversations/${conversationId}/reply`).send({ text: "seller ack" });
+    await seller.agent.post(`/api/v1/messages/conversations/${conversationId}/reply`).send({ text: "seller ack" });
     for (let i = 1; i <= 60; i++) {
-      await buyer.agent.post(`/api/messages/conversations/${conversationId}/reply`).send({ text: `message ${i}` });
+      await buyer.agent.post(`/api/v1/messages/conversations/${conversationId}/reply`).send({ text: `message ${i}` });
     }
   });
 
   test("returns a bounded page, not the whole history", async () => {
-    const res = await buyer.agent.get(`/api/messages/conversations/${conversationId}/messages`);
+    const res = await buyer.agent.get(`/api/v1/messages/conversations/${conversationId}/messages`);
     expect(res.status).toBe(200);
     expect(res.body.messages.length).toBeLessThanOrEqual(50);
     expect(res.body.hasMore).toBe(true);
@@ -140,7 +140,7 @@ describe("message pagination", () => {
   });
 
   test("the first page is the NEWEST messages, in chronological order", async () => {
-    const res = await buyer.agent.get(`/api/messages/conversations/${conversationId}/messages`);
+    const res = await buyer.agent.get(`/api/v1/messages/conversations/${conversationId}/messages`);
     const texts = res.body.messages.map((m) => m.text);
     // A chat opens at the bottom, so the newest page is what's needed first.
     expect(texts[texts.length - 1]).toBe("message 60");
@@ -149,9 +149,9 @@ describe("message pagination", () => {
   });
 
   test("the cursor walks backwards without repeating or skipping", async () => {
-    const page1 = await buyer.agent.get(`/api/messages/conversations/${conversationId}/messages`);
+    const page1 = await buyer.agent.get(`/api/v1/messages/conversations/${conversationId}/messages`);
     const page2 = await buyer.agent.get(
-      `/api/messages/conversations/${conversationId}/messages?cursor=${page1.body.nextCursor}`
+      `/api/v1/messages/conversations/${conversationId}/messages?cursor=${page1.body.nextCursor}`
     );
 
     const ids1 = page1.body.messages.map((m) => m.id);
@@ -162,12 +162,12 @@ describe("message pagination", () => {
 
   test("a non-participant can't read a conversation's messages", async () => {
     const stranger = await createVerifiedUser(app, { email: "pagemsgstranger@example.com" });
-    const res = await stranger.agent.get(`/api/messages/conversations/${conversationId}/messages`);
+    const res = await stranger.agent.get(`/api/v1/messages/conversations/${conversationId}/messages`);
     expect(res.status).toBe(403);
   });
 
   test("the inbox no longer carries full message arrays", async () => {
-    const res = await buyer.agent.get("/api/messages/conversations");
+    const res = await buyer.agent.get("/api/v1/messages/conversations");
     const convo = res.body.conversations.find((c) => c.id === conversationId);
     expect(convo).toBeDefined();
     // A preview and an unread count are all the inbox needs.
@@ -177,7 +177,7 @@ describe("message pagination", () => {
   });
 
   test("unread counts are still correct with pagination in place", async () => {
-    const res = await seller.agent.get("/api/messages/conversations");
+    const res = await seller.agent.get("/api/v1/messages/conversations");
     const convo = res.body.conversations.find((c) => c.id === conversationId);
     // The seller hasn't read the 60 buyer messages sent after their ack.
     expect(convo.unreadCount).toBeGreaterThan(0);

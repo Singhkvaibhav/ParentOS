@@ -29,7 +29,7 @@ describe("robots.txt and sitemap.xml", () => {
 
   test("sitemap.xml is valid-shaped XML that includes an active listing", async () => {
     const seller = await createVerifiedUser(app, { email: "seo-seller1@example.com" });
-    const created = await seller.agent.post("/api/listings").send({
+    const created = await seller.agent.post("/api/v1/listings").send({
       category: "toys", title: "Sitemap test toy", priceCents: 1500, condition: "Good", city: "Helsinki", area: "Kamppi",
     });
 
@@ -42,7 +42,7 @@ describe("robots.txt and sitemap.xml", () => {
 
   test("a moderated (taken-down) listing does not appear in the sitemap", async () => {
     const seller = await createVerifiedUser(app, { email: "seo-seller2@example.com" });
-    const created = await seller.agent.post("/api/listings").send({
+    const created = await seller.agent.post("/api/v1/listings").send({
       category: "toys", title: "Should be hidden", priceCents: 1500, condition: "Good", city: "Helsinki", area: "Kamppi",
     });
     const { query } = require("../db");
@@ -56,7 +56,7 @@ describe("robots.txt and sitemap.xml", () => {
 describe("GET /listing/:id (crawler/share-link shell)", () => {
   test("a real listing gets its own title and Open Graph tags", async () => {
     const seller = await createVerifiedUser(app, { email: "seo-seller3@example.com" });
-    const created = await seller.agent.post("/api/listings").send({
+    const created = await seller.agent.post("/api/v1/listings").send({
       category: "toys",
       title: "Wooden train set",
       priceCents: 2500,
@@ -92,7 +92,7 @@ describe("GET /listing/:id (crawler/share-link shell)", () => {
 
   test("a moderated listing 404s for an anonymous viewer", async () => {
     const seller = await createVerifiedUser(app, { email: "seo-seller4@example.com" });
-    const created = await seller.agent.post("/api/listings").send({
+    const created = await seller.agent.post("/api/v1/listings").send({
       category: "toys", title: "Taken down item", priceCents: 1000, condition: "Good", city: "Helsinki", area: "Kamppi",
     });
     const { query } = require("../db");

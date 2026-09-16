@@ -18,7 +18,7 @@
 //   1. Backend running:            npm start
 //   2. Test-mode keys in .env:     STRIPE_SECRET_KEY=sk_test_...
 //   3. Webhooks forwarded locally, in another terminal:
-//        stripe listen --forward-to localhost:4000/api/transactions/webhook
+//        stripe listen --forward-to localhost:4000/api/v1/transactions/webhook
 //      and put the printed whsec_... in STRIPE_WEBHOOK_SECRET.
 //
 // Run with: node scripts/smoke-stripe.js
@@ -90,14 +90,14 @@ async function api(path, { method = "GET", body } = {}) {
 async function waitForStatus(transactionId, wanted, timeoutMs = 30000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const { transactions } = await api("/api/transactions/mine");
+    const { transactions } = await api("/api/v1/transactions/mine");
     const t = transactions.find((x) => x.id === transactionId);
     if (t && t.status === wanted) return t;
     await new Promise((r) => setTimeout(r, 1000));
   }
   throw new Error(
     `Timed out waiting for transaction ${transactionId} to reach '${wanted}'.\n` +
-    "Is `stripe listen --forward-to localhost:4000/api/transactions/webhook` running,\n" +
+    "Is `stripe listen --forward-to localhost:4000/api/v1/transactions/webhook` running,\n" +
     "and is STRIPE_WEBHOOK_SECRET set to the whsec_... it printed?"
   );
 }
@@ -111,14 +111,14 @@ async function waitForStatus(transactionId, wanted, timeoutMs = 30000) {
   await api("/api/health");
 
   stepLog(2, `Creating seller ${sellerEmail}`);
-  const sellerSignup = await api("/api/auth/signup", {
+  const sellerSignup = await api("/api/v1/auth/signup", {
     method: "POST",
     body: { name: "Smoke Seller", email: sellerEmail, password: "smokepass123" },
   });
-  await api("/api/auth/verify", { method: "POST", body: { email: sellerEmail, code: sellerSignup.devCode } });
+  await api("/api/v1/auth/verify", { method: "POST", body: { email: sellerEmail, code: sellerSignup.devCode } });
 
   stepLog(3, "Creating a listing");
-  const { listing } = await api("/api/listings", {
+  const { listing } = await api("/api/v1/listings", {
     method: "POST",
     body: {
       category: "toys", title: `Smoke test item ${stamp}`, priceCents: 2500,
@@ -131,20 +131,20 @@ async function waitForStatus(transactionId, wanted, timeoutMs = 30000) {
   console.log(
     "\n    NOTE: the seller needs a Connect account with charges enabled or\n" +
     "    checkout will (correctly) refuse. Complete onboarding at\n" +
-    `    ${BASE}/api/connect/onboard or use an already-onboarded test seller.`
+    `    ${BASE}/api/v1/connect/onboard or use an already-onboarded test seller.`
   );
 
   stepLog(4, `Creating buyer ${buyerEmail}`);
   cookies = ""; csrf = "";
   await api("/api/health");
-  const buyerSignup = await api("/api/auth/signup", {
+  const buyerSignup = await api("/api/v1/auth/signup", {
     method: "POST",
     body: { name: "Smoke Buyer", email: buyerEmail, password: "smokepass123" },
   });
-  await api("/api/auth/verify", { method: "POST", body: { email: buyerEmail, code: buyerSignup.devCode } });
+  await api("/api/v1/auth/verify", { method: "POST", body: { email: buyerEmail, code: buyerSignup.devCode } });
 
   stepLog(5, "Checkout - creating a real PaymentIntent");
-  const { transaction, clientSecret } = await api("/api/transactions/checkout", {
+  const { transaction, clientSecret } = await api("/api/v1/transactions/checkout", {
     method: "POST",
     body: { listingId: listing.id, deliveryMethod: "pickup" },
   });
@@ -164,17 +164,17 @@ async function waitForStatus(transactionId, wanted, timeoutMs = 30000) {
   stepLog(8, "Seller marks it fulfilled");
   cookies = ""; csrf = "";
   await api("/api/health");
-  await api("/api/auth/login", { method: "POST", body: { email: sellerEmail, password: "smokepass123" } });
-  await api(`/api/transactions/${transaction.id}/fulfil`, { method: "POST" });
+  await api("/api/v1/auth/login", { method: "POST", body: { email: sellerEmail, password: "smokepass123" } });
+  await api(`/api/v1/transactions/${transaction.id}/fulfil`, { method: "POST" });
 
   stepLog(9, "Buyer confirms receipt");
   cookies = ""; csrf = "";
   await api("/api/health");
-  await api("/api/auth/login", { method: "POST", body: { email: buyerEmail, password: "smokepass123" } });
-  await api(`/api/transactions/${transaction.id}/confirm-receipt`, { method: "POST" });
+  await api("/api/v1/auth/login", { method: "POST", body: { email: buyerEmail, password: "smokepass123" } });
+  await api(`/api/v1/transactions/${transaction.id}/confirm-receipt`, { method: "POST" });
 
   stepLog(10, "Buyer leaves a review");
-  await api("/api/reviews", {
+  await api("/api/v1/reviews", {
     method: "POST",
     body: { revieweeId: listing.seller_id, listingId: listing.id, rating: 5, comment: "Smoke test" },
   });
