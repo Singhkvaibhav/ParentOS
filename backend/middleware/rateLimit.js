@@ -18,12 +18,20 @@ function getRedisClient() {
   if (!redisClient) {
     const Redis = require("ioredis");
     redisClient = new Redis(REDIS_URL, {
-      // Rate limiting is best-effort infrastructure, not a durable queue: a
-      // slow/unreachable Redis should fail one check fast - passOnStoreError
-      // below then allows the request through - rather than pile up retries
-      // or queue commands while a request is waiting on this middleware.
+      // Rate limiting is best-effort infrastructure, not a durable queue: on
+      // a genuine outage, a command should give up after one retry cycle -
+      // passOnStoreError below then allows the request through - rather
+      // than retry indefinitely while a request is waiting on this
+      // middleware. NOT paired with enableOfflineQueue: false, though: with
+      // lazyConnect, RedisStore's constructor fires its script-warming
+      // commands before the connection has actually been established, and
+      // disabling the offline queue turns that ordinary "still connecting"
+      // moment into an immediate, guaranteed failure on every single boot
+      // ("Stream isn't writeable and enableOfflineQueue options is false")
+      // instead of the harmless queue-then-flush the offline queue exists
+      // for. Caught via the `compose` CI job actually booting the app with
+      // REDIS_URL set - the only place this real (non-mocked) path runs.
       maxRetriesPerRequest: 1,
-      enableOfflineQueue: false,
       // Connects on first actual command (the first rate-limited request),
       // not at module load - a REDIS_URL that's misconfigured or briefly
       // unreachable at boot shouldn't be the reason the whole server won't
