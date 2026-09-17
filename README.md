@@ -61,10 +61,9 @@ backend/
   ai/           Anthropic-backed message assistance
   queue/        BullMQ job queue (bypassed without REDIS_URL)
   tests/        Jest + Supertest, against a real database
-
-database/
-  migrations/   one numbered file per schema change, never edited after landing
-  seed.sql      demo data (dev only, never run in tests)
+  database/
+    migrations/   one numbered file per schema change, never edited after landing
+    seed.sql      demo data (dev only, never run in tests)
 
 mobile/         React Native (Expo) app - same backend, /api/v1
 ```
