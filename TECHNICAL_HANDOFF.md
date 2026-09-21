@@ -31,10 +31,10 @@ messaging, checkout through real Stripe Connect (test mode), the full
 pending → paid → fulfilled → completed order lifecycle, reviews/trust
 signals, moderation (reports, blocks, takedowns), notifications (email +
 mobile push), a reconciliation job that checks Stripe's view of the world
-against the database, and an admin-facing analytics surface. 219 automated
-tests, including a real end-to-end run (39 assertions) against a live
-Postgres and Stripe's actual SDK talking to a local stripe-mock — not just
-mocked unit tests.
+against the database, and an admin-facing analytics surface. 402 backend
+tests plus 24 frontend and 10 mobile tests, including a real end-to-end
+run (39 assertions) against a live Postgres and Stripe's actual SDK
+talking to a local stripe-mock — not just mocked unit tests.
 
 **Current stage.** Pre-launch. The application layer is unusually far
 along for a pre-revenue project; the business/legal/ops layer is not.
@@ -70,7 +70,7 @@ has the full list.
 | Web | React + Vite | `frontend/src`, feature-folder layout (`features/<domain>`), thin `pages/` composing them |
 | Mobile | React Native (Expo, TypeScript) | Same backend, `/api/v1`; Bearer JWT instead of cookies; Stripe PaymentSheet needs a dev/EAS build, not Expo Go |
 | API | Node + Express | `routes → services → PostgreSQL`, one domain folder per concern (`auth`, `listings`, `images`, `moderation`, `connect`, `reconciliation`, `analytics`, `notifications`, ...) |
-| Database | PostgreSQL 16 (+ PostGIS) | 25 sequential migrations, real schema constraints doing real work (see `002_state_invariants.sql`, `012_trust_counters_completed_only.sql`) |
+| Database | PostgreSQL 16 (+ PostGIS) | 24 sequential migrations, real schema constraints doing real work (see `002_state_invariants.sql`, `012_trust_counters_completed_only.sql`) |
 | Queue | BullMQ + Redis | Optional — falls back to running jobs in-process when `REDIS_URL` is unset, so local dev needs no Redis |
 | Payments | Stripe + Stripe Connect | Sellers onboard through Connect; checkout is a PaymentIntent; payouts and refunds go through the same account |
 | Object storage | Pluggable: S3-compatible or local disk | Unset `S3_*` env vars → images save to `backend/uploads/`, served locally. Set them → real S3/R2/B2/MinIO |
@@ -127,6 +127,13 @@ exists specifically to keep this true).
   transaction-event audit trail (`013_transaction_events.sql`).
 - **Seller payout** — via the seller's Connect account once an order
   completes; `COMMISSION_PERCENT` (default 8%) is taken by the platform.
+- **Social/crawler previews** — `backend/seo/render.js` injects real
+  per-listing `<title>`/description/Open Graph tags into the built SPA's
+  `index.html` for crawlers and link-preview bots that don't execute
+  JavaScript (Googlebot, Slackbot, WhatsApp, iMessage, Twitter/X,
+  Facebook) — without it, every shared listing link would show the same
+  generic "Uusiksi - ParentOS" preview. A real browser gets identical
+  HTML; the SPA's own script tag is untouched either way.
 
 ## 5. Images
 
@@ -187,18 +194,21 @@ and the offsite backup copy path (success and failure).
 
 ## 7. Testing
 
-- **Backend** — Jest + Supertest, 219 tests, against a **real** Postgres
-  database (`parentos_test`), not mocks — several bugs this project hit
-  were concurrency/constraint issues mocks would have hidden. Covers auth,
-  authorization (including adversarial cases), listings, search/geosearch,
-  uploads/image queue, messaging, transactions/lifecycle, moderation,
-  reviews/trust, notifications/push, reconciliation, rate limiting, and
+- **Backend** — Jest + Supertest, 402 tests across 33 suites, against a
+  **real** Postgres database (`parentos_test`), not mocks — several bugs
+  this project hit were concurrency/constraint issues mocks would have
+  hidden. Covers auth, authorization (including adversarial cases),
+  listings, search/geosearch, uploads/image queue, messaging,
+  transactions/lifecycle, moderation, reviews/trust, notifications/push,
+  reconciliation, product analytics, SEO rendering, rate limiting, and
   general security hardening (see the file list in `backend/tests/`).
-- **Frontend** — component/unit tests under `frontend/src` (e.g.
-  `i18n/errorMessages.test.js`), plus a build check.
-- **Mobile** — Jest (`jest-expo` preset) for notification routing and the
-  token-refresh dedup logic; `tsc --noEmit` and `expo export --platform ios`
-  as no-simulator-needed build checks.
+- **Frontend** — Vitest + React Testing Library, 24 tests across 4 files:
+  error-message translation (`i18n/errorMessages.test.js`), the favorites
+  hook, the marketplace config hook, and the cookie consent banner - plus
+  a build check.
+- **Mobile** — Jest (`jest-expo` preset), 10 tests across 2 files, for
+  notification routing and the token-refresh dedup logic; `tsc --noEmit`
+  and `expo export --platform ios` as no-simulator-needed build checks.
 - **Docker/Compose** — CI builds and boots the actual images and the full
   compose stack on every push (not just unit tests in isolation).
 - **End-to-end** — `npm run e2e`: 39 assertions, a real Express process,
@@ -245,6 +255,11 @@ single source of truth for "does this pass."
   deletion anonymizes rather than hard-deletes, to satisfy Finnish
   accounting-record retention (Kirjanpitolaki, commonly 6 years) —
   see `backend/services/privacyService.js` and `/api/privacy/export`.
+- **Cookie consent** — the optional PostHog product-analytics capture
+  (Section 2) is opt-in, not opt-out-with-a-banner: nothing is captured
+  until the visitor accepts (`opt_out_capturing_by_default: true`,
+  `components/ui/CookieConsent.jsx`), and the banner itself renders
+  nothing when analytics isn't configured.
 
 `security.test.js`, `hardening.test.js`, and `stripe-adversarial.test.js`
 exist specifically to keep adversarial cases honest as the code changes,

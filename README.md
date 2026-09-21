@@ -70,6 +70,7 @@ mobile/         React Native (Expo) app - same backend, /api/v1
 
 ## Docs
 
+- [TECHNICAL_HANDOFF.md](TECHNICAL_HANDOFF.md) - what exists, what's verified, and what's deliberately unfinished, for whoever picks this up next
 - [DEPLOYMENT.md](DEPLOYMENT.md) - what's been verified in production and what hasn't
 - [CHANGELOG.md](CHANGELOG.md) - detailed round-by-round development history
 - [legal/](legal/) - draft policies (Terms, Privacy, Cookies) - **drafts only, need legal review**

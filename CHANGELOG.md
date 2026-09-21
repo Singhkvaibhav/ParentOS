@@ -11,7 +11,7 @@ Requires **Node 18+** and **PostgreSQL 16**. From the repository root:
 ```bash
 npm run setup     # installs both workspaces, creates backend/.env, checks Postgres
 npm run migrate   # applies all migrations to an empty database
-npm test          # 219 tests
+npm test          # 402 tests
 ```
 
 `npm run verify` runs migrate, tests, both lints and the frontend build in
@@ -30,14 +30,162 @@ hidden. It manages its own `parentos_test` schema.
 ```
 ParentOS
 ├── frontend   (React + Vite)
-├── backend    (Node + Express, layered into routes → services → PostgreSQL)
-└── database   (PostgreSQL schema + seed data)
+├── backend    (Node + Express, layered into routes → services → PostgreSQL;
+│               database/ - schema migrations + seed data - lives here)
+├── mobile     (React Native / Expo - same backend, /api/v1)
+└── deploy     (nginx config for the production compose stack)
 ```
 
 This replaces the earlier single-file Claude.ai artifact prototype with a
 proper local dev setup you can open in VS Code, extend, and eventually
 deploy. The artifact version still exists as a backup for quick, no-setup
 demos - this project is for real development.
+
+## Forty-third round: CI failures on frontend (jsdom/Node 20) and compose (Redis boot crash)
+
+Two independent CI breakages, caught and fixed in the same pass.
+
+**Frontend**: `jsdom` had resolved to `30.0.1`, which requires Node
+`^22.22.2 || ^24.15.0 || >=26.0.0` - CI pins Node 20, so `npm test` failed
+outright (`TypeError: webidl.util.markAsUncloneable is not a function`,
+from undici's newer Web API surface that Node 20 doesn't have). Pinned to
+`jsdom@27.0.0`, the newest version confirmed compatible with Node 20;
+verified 24/24 tests passing via a clean `npm ci` under `node:20`.
+
+**Compose**: `middleware/rateLimit.js`'s `ioredis` client paired
+`lazyConnect: true` with `enableOfflineQueue: false`. `RedisStore`'s
+constructor fires two `SCRIPT LOAD` commands immediately to warm its Lua
+scripts, before a lazyConnect'd client has actually connected - with the
+offline queue disabled, ioredis rejects that first command outright
+instead of queueing it (`"Stream isn't writeable and enableOfflineQueue
+options is false"`), crashing the app with an unhandled rejection on
+every single boot with `REDIS_URL` set. Only the `compose` CI job
+actually boots the app that way, which is why the mocked rate-limit tests
+missed it. Removed `enableOfflineQueue: false`; added a regression test
+asserting on the actual ioredis constructor options, and verified the fix
+for real by building the API image and running the full stack (migrate,
+smoke test, 12-step purchase journey) against a live Postgres/Redis/
+fake-Stripe compose stack.
+
+## Forty-second round: a round of code review findings, closed out
+
+- **Image-processing queue state** - the worker now completes the
+  uploads state transition itself (`uploaded` → `processed`/`failed`)
+  after queued image processing, instead of leaving rows stuck as
+  `uploaded` forever once a public image already existed.
+- **Quarantine cleanup** - split storage's `deleteImage(url)` from a new
+  `deleteObject(key)`, fixing quarantine-object cleanup (abandoned
+  uploads, rejected images) that was silently no-op'ing because it was
+  passing raw storage keys to a URL-only function.
+- **Reconciliation pagination** - reverse reconciliation
+  (`findOrphanedPaymentIntents`) now paginates through Stripe's
+  PaymentIntent list instead of only inspecting the first page, so a
+  lookback window with >100 PaymentIntents no longer leaves the rest
+  uninspected.
+- **Mobile secure storage** - access/refresh tokens move from
+  `AsyncStorage` to `expo-secure-store` (iOS Keychain / Android
+  Keystore), with a one-time migration for any session already
+  persisted under the old key.
+- **CI coverage** - added a mobile job (`tsc` + `jest`) and wired
+  `npm test` into the frontend job - both test suites existed but
+  neither actually ran in CI before this.
+- **Redis-backed rate limiting** - rate limiting is now backed by
+  `rate-limit-redis` whenever `REDIS_URL` is set (already true for
+  `docker-compose.yml`'s `api` service), so horizontally scaled
+  instances share one count instead of each granting the full
+  configured allowance independently.
+- Refreshed `mobile/README.md` and stale source comments for the now-
+  unified repo layout; added a dedicated adversarial authorization test
+  suite (`authzAdversarial.test.js`) covering cross-owner listing
+  mutations, admin-only route rejection, cross-user conversation state,
+  and token revocation on account deletion.
+
+## Forty-first round: the Uusiksi mobile app joins the unified repo
+
+Brings the mobile client into the same repo as the backend and web
+frontend it actually talks to, rather than living in a separate history
+with its own bespoke backend. React Native (Expo, TypeScript); includes
+marketplace browsing, messaging, Stripe Connect checkout with Apple Pay/
+Google Pay, push notifications, and a Jest test suite (notification
+routing, token-refresh dedup logic). Points at the versioned `/api/v1`
+backend API landed in the previous round - not a coincidence, the two
+were built together so the mobile client never had to speak to an
+unversioned or web-only API surface.
+
+## Fortieth round: versioning the API, and real frontend test coverage
+
+Introduces a single `API_PREFIX` (`/api/v1`) so mobile and web clients
+can pin to a specific API version instead of "whatever `/api` currently
+means" as more clients ship (per OWASP API9:2023, improper inventory/
+version management). Every route, every test, and every script
+(`e2e.js`, `journey.js`, `smoke-stripe.js`) moved onto the prefix
+together, not left half-migrated.
+
+Also the frontend's first real automated test coverage - Vitest + React
+Testing Library: error-message translation (`i18n/errorMessages.test.js`),
+the favorites hook, the marketplace config hook, and the cookie consent
+banner. Alongside this, 14 duplicated `createListing`/`createVerifiedUser`
+test helpers scattered across the backend suite were consolidated into
+shared, fail-loudly helpers in `tests/helpers.js`.
+
+## Thirty-ninth round: thumbnails, push notifications, SEO rendering, product analytics, cookie consent, subcategories
+
+The largest single round to date (103 files) - not one feature but
+several independent P2/P3 items landing together:
+
+- **Photo thumbnails** (`023_photo_thumbnails.sql`, `thumbnailService.js`)
+  - generated during the existing image-processing pipeline, not a
+  separate job; a thumbnail-generation failure degrades to "no
+  thumbnail" rather than failing the whole upload.
+- **Push notifications** (`024_push_tokens.sql`, `services/pushService.js`,
+  `push.test.js`) - sent through Expo's push service, which needs no API
+  key or account at this volume. Token format is validated
+  (`Expo(nent)?PushToken[...]`) before it's ever stored, and upserts are
+  keyed on the token itself, not `(user_id, token)`, since the same
+  physical device can end up registered to a different account after a
+  sign-out/back-in.
+- **Server-side SEO rendering** (`backend/seo/render.js`, `seo/routes.js`,
+  `seo.test.js`) - injects real per-listing `<title>`/description/Open
+  Graph tags into the built SPA's `index.html` for crawlers and
+  link-preview bots (Googlebot, Slackbot, WhatsApp, iMessage, Twitter/X,
+  Facebook) that don't execute JavaScript and would otherwise only ever
+  see the static "Uusiksi - ParentOS" shell every page shares. A real
+  browser gets the identical HTML - the SPA's own script tag is
+  untouched, so it boots and client-side-renders normally either way.
+  Cached on the built file's mtime, not re-read per request, so a
+  listing going viral doesn't mean `stat()`-ing disk on every hit.
+- **Product analytics via PostHog** (`services/productAnalyticsService.js`,
+  `frontend/src/productAnalytics.js`, `productAnalytics.test.js`) -
+  deliberately separate from `services/analyticsService.js`, which serves
+  operational dashboards (seller stats, platform totals) back into the
+  app's own UI. This instead answers "where do people drop off between
+  signing up and their first sale?". Server-side captures only the one
+  event that must be authoritative - a checkout actually settling, per
+  Stripe's webhook - since a client-side "payment succeeded" event would
+  fire (or fail to) based on whether the buyer's tab was still open, not
+  on what actually happened to their money. Everything upstream of that
+  (viewed a listing, started checkout) is captured client-side. A no-op
+  whenever `POSTHOG_API_KEY` is unset, same pattern as `errorTracking.js`.
+- **Cookie consent banner** (`components/ui/CookieConsent.jsx`) - renders
+  nothing at all when analytics isn't configured; when it is, nothing is
+  captured until Accept is pressed (`opt_out_capturing_by_default: true`)
+  - opt-in, not opt-out-with-a-banner-that-doesn't-actually-block-anything.
+- **Listing subcategories** (`021_listing_subcategories.sql`,
+  `subcategoryVocabulary.test.js`) - Stage 1 of a category redesign
+  (Clothes > Baby/Girls/Outerwear, Accessories > Shoes/Hats, ...), added
+  as one nullable column scoped to the existing three top-level
+  categories rather than building a richer menu the backend couldn't yet
+  validate, which would let the UI offer combinations that don't exist as
+  data. Nullable rather than backfilled: no subcategory value is more
+  correct than another for listings that predate the column.
+- **Automated, verified backups** (`scripts/backup.sh`) - guards against
+  the classic failure mode (a backup job that's "succeeded" nightly for a
+  year, never restored, and turns out empty or truncated the day it's
+  needed) by verifying each dump after writing it rather than trusting
+  `pg_dump`'s exit code alone. Exits non-zero on any failure so a
+  scheduler can actually alert on it.
+- Plus: production nginx config (`deploy/nginx/parentos.conf`), a real
+  hero image replacing a placeholder, and assorted i18n/UI polish.
 
 ## Thirty-eighth round: a real end-to-end test
 
